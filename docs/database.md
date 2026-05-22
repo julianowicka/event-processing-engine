@@ -188,13 +188,17 @@ returned by the public stats contract.
 - `raw_incoming_events(order_id)`.
 - `raw_incoming_events(received_at)`.
 - `event_processing_jobs(status, available_at)`.
+- `event_processing_jobs(status, available_at, id)`.
 - `event_processing_jobs(raw_incoming_event_id)` unique.
 - `processed_event_keys(event_id)` unique.
 - `event_decisions(event_id)`.
 - `event_decisions(order_id)`.
+- `event_decisions(order_id, decision, created_at)`.
 - `event_decisions(raw_incoming_event_id)`.
 - `order_history(order_id, created_at)`.
+- `order_history(order_id, processed_at)`.
 - `order_history(event_id)`.
+- `order_field_versions(order_id)`.
 - `order_field_versions(order_id, field_name)` unique.
 
 ## Performance Notes
