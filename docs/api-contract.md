@@ -154,3 +154,9 @@ array.
 
 Items inside the array are accepted as raw deliveries whenever they can be stored
 as JSON, even if they are malformed, incomplete, or have unsupported fields.
+
+## Event Contract Evolution
+
+Events currently use the task contract fields: `eventId`, `orderId`, `type`,
+`timestamp`, and `payload`. Unknown payload fields are ignored. A production
+version would add an explicit schema version and compatibility rules.
