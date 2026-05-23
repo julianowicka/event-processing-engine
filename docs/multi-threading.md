@@ -1,44 +1,34 @@
 # Multi-threading
 
-Node.js handles requests concurrently, while SQLite allows only one writer at a
-time. The engine will make this behavior explicit instead of relying on accidental
-timing.
+The MVP is designed for a single local Node.js process and one JSON database
+file. This is appropriate for the recruitment task and keeps the behavior easy
+to inspect.
 
-## Concurrency Strategy
+## Current Strategy
 
-- Use one NestJS `TypeOrmModule` DataSource backed by `better-sqlite3`.
-- Enable WAL mode and `busy_timeout` during database initialization.
-- Keep ingestion transactions short: insert raw deliveries and jobs only.
-- Process each job inside a TypeORM transaction.
-- Keep transactions short and free from external calls.
-- Rely on `processed_event_keys.event_id` for final deduplication under concurrent requests.
+- `POST /events` performs ingestion only and returns `QUEUED`.
+- `EventWorkerService` processes available deliveries in the background.
+- File writes are performed by `JsonDatabaseService`.
+- The service loads the current file, mutates a working copy, and writes it back
+  after successful completion.
+- Processing order is raw delivery `id ASC`.
 
-## Batch Processing
+Because file-based persistence is not a multi-writer database, this MVP should
+not be horizontally scaled. The worker uses an in-process running guard so two
+ticks do not process the same JSON file concurrently.
 
-The API accepts a batch and persists raw deliveries in request order. Business
-processing is asynchronous and performed by the worker.
+## Future Scaling Path
 
-- `POST /events` inserts `raw_incoming_events` rows and `PENDING` jobs.
-- The response returns `QUEUED` for each stored raw delivery.
-- Business decisions are written later by the worker.
+To scale beyond one local process:
 
-## Parallelism Boundary
-
-One active worker processes jobs in raw delivery order. Horizontal API scaling is
-allowed for ingestion, but only one worker instance is enabled for a SQLite
-database file. This preserves `raw_incoming_events.id ASC` processing order.
-
-Worker claim order:
-
-```sql
-ORDER BY raw_incoming_events.id ASC
-```
-
-`event_timestamp` does not define processing order.
+1. Move from JSON file persistence to SQLite or a broker-backed store.
+2. Add worker claiming/locking.
+3. Preserve deduplication through `processedEventKeys`.
+4. Keep processing order deterministic per partition/order key.
+5. Keep the retry and DLQ policy.
 
 ## Idempotency
 
-The unique index on `processed_event_keys.event_id` is the final deduplication
-guard. Duplicate raw deliveries are still stored in `raw_incoming_events`, but
-only the first processed job claims the key. Later jobs create `DUPLICATE` audit
-decisions.
+`processedEventKeys.eventId` is the deduplication guard. The first structurally
+valid event claims the key before business rules run. Later raw deliveries with
+the same key are audited as `DUPLICATE`.

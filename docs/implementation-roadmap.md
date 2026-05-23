@@ -1,49 +1,33 @@
 # Implementation Roadmap
 
-The implementation will prioritize a working engine before secondary concerns.
+The roadmap is scoped to a 6-10 hour recruitment implementation with a working
+fragment preferred over an overbuilt design.
 
-## Phase 1: Storage Foundation
+## Implemented MVP
 
-- Add `typeorm`, `@nestjs/typeorm`, `better-sqlite3`, `@types/better-sqlite3`, and `@nestjs/schedule`.
-- Configure the TypeORM DataSource.
-- Create TypeORM entities.
-- Create TypeORM migrations for tables and indexes.
-- Add repository services around TypeORM repositories.
-- Add append-only ingestion tables and processing job tables.
+- JSON file persistence on disk.
+- Append-only raw deliveries.
+- Materialized order state.
+- History, audit decisions, deduplication keys, field versions, stats, and DLQ.
+- Event-shape validation during worker processing.
+- Deduplication by `eventId`.
+- Explicit order status state machine.
+- Field-level merge for set-like fields.
+- Cumulative payment/refund behavior.
+- Deferred events for out-of-order delivery before creation.
+- `POST /events`: ingest and return `QUEUED`.
+- Background worker: process available `PENDING` and `DEFERRED` deliveries.
+- Retry metadata and `deadLetterEvents` for technical worker failures.
+- `GET /orders/:id`: current state, history, rejected events, pending events,
+  and audit log.
+- `GET /stats`: required counters, timing, pending count, and DLQ count.
+- `GET /health`: operational health endpoint.
+- README with assumptions, run commands, and API examples.
+- Focused Jest and e2e tests for critical business behavior.
 
-## Phase 2: Domain Engine
+## Later Enhancements
 
-- Add `zod` for event-level validation.
-- Define event, order, state, decision, and reason enums.
-- Implement validation.
-- Implement State pattern.
-- Implement field-level merge.
-- Implement job claiming and per-job transactions.
-- Implement deduplication through `processed_event_keys`.
-
-## Phase 3: API
-
-- Implement `POST /events`.
-- Implement asynchronous event worker.
-- Implement `GET /orders/:id`.
-- Implement `GET /stats`.
-- Implement `GET /health`.
-- Add clear response DTOs.
-
-## Phase 4: Tests
-
-- Add unit tests for validation, state transitions, and merge logic.
-- Add integration tests for API and SQLite.
-- Add `autocannon` performance baseline tests.
-
-## Phase 5: Authentication
-
-- Add API key guard.
-- Protect all business endpoints.
-- Document configuration.
-
-## Phase 6: README
-
-- Replace Nest starter README.
-- Document assumptions.
-- Add setup, run, test, and API examples.
+- Replace JSON file with SQLite for concurrent writes.
+- Add worker claiming/locking for multi-process deployments.
+- Add API key authentication, disabled by default for local evaluation.
+- Add broader integration and performance tests.

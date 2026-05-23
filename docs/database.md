@@ -1,217 +1,142 @@
 # Database
 
-SQLite will be used as the local persistent database. The implementation will use
-TypeORM with the `better-sqlite3` driver. TypeORM owns connection management,
-entity mapping, migrations, repositories, and transaction helpers. Domain logic,
-state transitions, merge decisions, deduplication policy, and audit decisions
-remain in application services.
+The MVP uses a JSON file on disk instead of SQLite or an ORM. This keeps the
+submission small, inspectable, and aligned with the task allowance: "baza danych
+w postaci pliku JSON na dysku".
 
-## ORM Scope
+Default path:
 
-TypeORM is used for persistence mechanics only:
+- `data/events-db.json`
 
-- Opening and configuring the SQLite connection.
-- Running migrations.
-- Mapping tables to entities.
-- Providing repositories.
-- Executing per-job transactions.
+Override:
 
-Application services own workflow behavior and business decisions.
+- `EVENT_ENGINE_DB_FILE=/absolute/path/database.json`
 
-## Entities
+## Persistence Boundary
 
-- `OrderEntity`.
-- `RawIncomingEventEntity`.
-- `EventProcessingJobEntity`.
-- `ProcessedEventKeyEntity`.
-- `EventDecisionEntity`.
-- `OrderHistoryEntity`.
-- `OrderFieldVersionEntity`.
-- `ProcessingStatsEntity`.
+The file is managed by `JsonDatabaseService`. The service provides a small
+transaction-like API:
 
-## Tables
+- Load the current JSON file.
+- Clone it into a working copy.
+- Run the domain mutation.
+- Write the full file back only when the mutation succeeds.
+
+This is enough for the local single-process recruitment app. It also keeps the
+domain logic independent from storage, so replacing the JSON file with SQLite
+later would not require rewriting the state machine.
+
+## Collections
+
+### `rawIncomingEvents`
+
+Append-only raw deliveries received by `POST /events`.
+
+Important fields:
+
+- `id`: internal incoming delivery id.
+- `eventId`, `orderId`, `type`, `eventTimestamp`: extracted convenience fields,
+  nullable for malformed items.
+- `rawEvent`: original JSON item.
+- `payload`: extracted payload when it is an object.
+- `availableAt`: earliest time the worker may retry this delivery.
+- `processingStatus`: `PENDING`, `DEFERRED`, `DONE`, or `DEAD_LETTERED`.
+- `attempts`: technical failure attempts.
+- `lastErrorMessage`: last unexpected worker error, if any.
+- `lastDecisionId`, `lastReasonCode`: latest engine decision for the delivery.
+
+### `processedEventKeys`
+
+Deduplication keys by external `eventId`.
+
+The first raw delivery with a structurally valid event claims the key before
+business rules run. That means later deliveries with the same `eventId` become
+`DUPLICATE`, even if the first delivery is later rejected by a business rule or
+deferred until the order exists.
 
 ### `orders`
 
-Stores the latest materialized order state for fast `GET /orders/:id`.
+Materialized current order state.
 
-Fields:
+Important fields:
 
-- `id`: internal primary key.
-- `order_id`: external order identifier, unique.
-- `status`: current order status.
-- `amount_minor`: current order amount in the smallest currency unit.
-- `currency`: optional currency code.
-- `paid_amount_minor`: total captured amount in the smallest currency unit.
-- `refunded_amount_minor`: total refunded amount in the smallest currency unit.
-- `version`: incremented after every accepted state change.
-- `last_accepted_event_timestamp`: highest timestamp of any accepted or partially applied event that affected order state.
-- `last_accepted_event_id`: event that last changed the order.
-- `created_at`, `updated_at`.
+- `orderId`
+- `status`
+- `amountMinor`
+- `currency`
+- `paidAmountMinor`
+- `refundedAmountMinor`
+- `version`
+- `maxAcceptedEventTimestamp`
+- `lastAcceptedEventId`
+- `createdAt`, `updatedAt`
 
-### `raw_incoming_events`
+`maxAcceptedEventTimestamp` is the highest timestamp of an accepted or partially
+applied event. It is not used as the only conflict rule; field-level versions are
+used for set-like fields.
 
-Stores every raw event delivery received by the API. This table is append-only,
-is never updated after insert, and is not used as the processing queue.
+### `orderFieldVersions`
 
-Fields:
+Per-field timestamp metadata for fields that behave as last-write-wins values:
 
-- `id`: internal primary key.
-- `event_id`: external event id, nullable for malformed events.
-- `order_id`: nullable for malformed events.
-- `type`: nullable for malformed events.
-- `event_timestamp`: nullable for malformed events.
-- `raw_event_json`: original event item from the request.
-- `payload_json`: raw payload when available, nullable.
-- `received_at`.
+- `status`
+- `amountMinor`
+- `currency`
+- `paidAmountMinor`
+- `refundedAmountMinor`
 
-Every delivery is inserted, including duplicates, invalid events, and malformed
-items. Duplicate detection is handled by `processed_event_keys`.
+Set-like fields apply only when the incoming event timestamp is strictly newer
+than the field version. Equal timestamps keep the first accepted value.
 
-### `event_processing_jobs`
+### `orderHistory`
 
-Stores asynchronous processing work created from raw event deliveries.
+Accepted and partially applied state changes. Each entry stores:
 
-Fields:
+- source event id/type/timestamp,
+- status transition,
+- changed fields,
+- skipped obsolete fields,
+- final decision and reason code.
 
-- `id`: internal primary key.
-- `raw_incoming_event_id`: unique reference to `raw_incoming_events`.
-- `status`: `PENDING`, `PROCESSING`, `DONE`, or `FAILED`.
-- `attempts`.
-- `available_at`.
-- `claimed_at`.
-- `processed_at`.
-- `last_error_message`.
-- `created_at`, `updated_at`.
+### `eventDecisions`
 
-`POST /events` inserts raw events and creates `PENDING` jobs. Workers claim jobs
-in raw delivery order using `raw_incoming_events.id ASC`.
+Audit log of every explicit engine decision:
 
-### `processed_event_keys`
+- `ACCEPTED`
+- `PARTIALLY_APPLIED`
+- `REJECTED`
+- `DUPLICATE`
+- `DEFERRED`
+- `FAILED`
 
-Stores processed external event ids for fast deduplication.
+This is the source for `GET /orders/:id` rejected events, pending events, and
+audit log.
 
-Fields:
+### `stats`
 
-- `event_id`: external event id, unique.
-- `first_raw_incoming_event_id`: reference to the first raw delivery that claimed the key.
-- `order_id`: nullable when the first delivery has no valid order id.
-- `first_seen_at`.
+Aggregate counters for `GET /stats`:
 
-This table allows duplicate deliveries to remain in `raw_incoming_events` while still
-making deduplication a cheap indexed lookup. The first delivery with a given
-`event_id` claims the key even when the final business decision is `REJECTED`.
+- `validEventsCount`: accepted + partially applied.
+- `acceptedEventsCount`
+- `partiallyAppliedEventsCount`
+- `rejectedEventsCount`
+- `duplicateEventsCount`
+- `processedEventsCount`
+- `totalProcessingTimeMs`
 
-### `event_decisions`
+Deferred events are intentionally not counted as rejected. Dead-lettered
+technical failures are counted as rejected.
 
-Audit log of every engine decision, including duplicates.
+### `deadLetterEvents`
 
-Fields:
+Technical failures that exceeded the retry limit. Each entry stores:
 
-- `id`: primary key.
-- `raw_incoming_event_id`: reference to `raw_incoming_events`.
-- `event_id`: nullable external event id.
-- `order_id`: nullable external order id.
-- `decision`: `ACCEPTED`, `REJECTED`, `PARTIALLY_APPLIED`, `DUPLICATE`, or `FAILED`.
-- `reason_code`.
-- `reason_message`.
-- `details_json`.
-- `created_at`.
+- raw incoming event id,
+- raw event snapshot,
+- error message,
+- reason code,
+- attempt count,
+- created timestamp.
 
-### `order_history`
-
-Stores accepted state changes and partial applications.
-
-Fields:
-
-- `id`: primary key.
-- `order_id`.
-- `event_id`.
-- `event_timestamp`.
-- `processed_at`.
-- `from_status`: nullable, set only when status changes.
-- `to_status`: nullable, set only when status changes.
-- `changed_fields_json`: object with non-status changed field names and new values.
-- `created_at`.
-
-### `order_field_versions`
-
-Stores field-level version metadata used by the merge strategy.
-
-Fields:
-
-- `order_id`.
-- `field_name`.
-- `last_event_timestamp`.
-- `last_event_id`.
-- `updated_at`.
-
-Primary key: `(order_id, field_name)`.
-
-### `processing_stats`
-
-Stores aggregate counters to make `GET /stats` cheap.
-
-Fields:
-
-- `id`: fixed single-row primary key.
-- `valid_events_count`.
-- `accepted_events_count`.
-- `partially_applied_events_count`.
-- `rejected_events_count`.
-- `duplicate_events_count`.
-- `processed_events_count`.
-- `total_processing_time_ms`.
-- `updated_at`.
-
-[`GET /stats`](./api-contract.md#get-stats) exposes `validEventsCount`,
-`rejectedEventsCount`, `duplicateEventsCount`, and `averageProcessingTimeMs`.
-The average is derived by `StatsService` from `total_processing_time_ms` and
-`processed_events_count`.
-
-Public counter rules:
-
-- `valid_events_count`: `ACCEPTED` and `PARTIALLY_APPLIED` decisions.
-- `accepted_events_count`: `ACCEPTED` decisions.
-- `partially_applied_events_count`: `PARTIALLY_APPLIED` decisions.
-- `rejected_events_count`: `REJECTED` and `FAILED` decisions.
-- `duplicate_events_count`: `DUPLICATE` decisions.
-- `processed_events_count`: all decisions included in processing time statistics.
-
-The additional internal counters support diagnostics and tests, but they are not
-returned by the public stats contract.
-
-## Indexes
-
-- `orders(order_id)` unique.
-- `raw_incoming_events(event_id)`.
-- `raw_incoming_events(order_id)`.
-- `raw_incoming_events(received_at)`.
-- `event_processing_jobs(status, available_at)`.
-- `event_processing_jobs(status, available_at, id)`.
-- `event_processing_jobs(raw_incoming_event_id)` unique.
-- `processed_event_keys(event_id)` unique.
-- `event_decisions(event_id)`.
-- `event_decisions(order_id)`.
-- `event_decisions(order_id, decision, created_at)`.
-- `event_decisions(raw_incoming_event_id)`.
-- `order_history(order_id, created_at)`.
-- `order_history(order_id, processed_at)`.
-- `order_history(event_id)`.
-- `order_field_versions(order_id)`.
-- `order_field_versions(order_id, field_name)` unique.
-
-## Performance Notes
-
-Current order reads are fast because `orders` is a materialized state table keyed
-by `order_id`. History and audit reads are bounded by indexed `order_id` lookups.
-Ingestion writes are cheap append-only inserts. Processing writes are heavier
-because accepted events update multiple tables, but each job runs inside a short
-SQLite transaction.
-
-## Transaction Boundary
-
-`POST /events` writes raw deliveries and jobs inside an ingestion transaction.
-Business processing happens later. Each job is processed inside its own SQLite
-transaction, so failed, duplicate, rejected, and accepted events do not roll back
-other jobs.
+Business rejections should stay in `eventDecisions`, not in the dead-letter
+queue.

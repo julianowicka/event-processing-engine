@@ -1,63 +1,64 @@
 # Merging Strategies
 
-Events can arrive late, out of order, or with partial payloads. The engine will
-use a field-level merge strategy instead of rejecting every older event.
+Events can arrive late, out of order, or with partial payloads. The engine uses
+two different strategies depending on the meaning of the field.
 
-## Main Rule
+## Set-Like Fields
 
-An event field is applied only when its event timestamp is greater than or equal
-to the last timestamp stored for that specific field.
+These fields represent the latest known value:
 
-Metadata is stored in `order_field_versions`.
+- `amountMinor`
+- `currency`
+- `status` when status is requested directly by `ORDER_UPDATED`
 
-Example:
+A set-like field is applied only when the event timestamp is strictly greater
+than the timestamp stored for that field.
 
-- `amount_minor` last changed at timestamp `1710002000`.
-- A late event with timestamp `1710001000` contains `amount_minor`.
-- The `amount_minor` update is rejected as obsolete.
+Same timestamp tie-breaker:
+
+- The first accepted event for that field wins.
+- A later event with the same timestamp is skipped for that field.
+- If no fields remain applicable, the event is rejected as obsolete.
+
+This fixes the earlier ambiguity between `>=` and "first accepted wins".
 
 ## Partial Application
 
-If an older event contains multiple fields, only obsolete fields are skipped.
-Fields that were not changed by newer events can still be applied.
+When an event contains several fields:
 
-Possible result:
+- newer fields are applied,
+- obsolete fields are skipped,
+- the audit decision is `PARTIALLY_APPLIED` when both happen.
 
-- Decision: `PARTIALLY_APPLIED`.
-- Audit reason: `PARTIAL_MERGE`.
-- History contains only the applied fields.
+Missing payload fields never erase existing state.
 
-## Missing Fields
+## Financial Fact Fields
 
-Missing payload fields never erase existing state. The engine updates only fields
-explicitly present in the payload.
+Payment and refund events are facts, not simple overwrites.
+
+- `PAYMENT_CAPTURED` captures one payment and sets `paidAmountMinor`.
+- `REFUND_ISSUED` adds a refund delta to `refundedAmountMinor`.
+
+Refund events therefore use cumulative arithmetic instead of "latest timestamp
+wins". Deduplication by `eventId` prevents the same financial fact from being
+applied twice.
 
 ## Status Changes
 
-Status changes are handled by the State pattern first. A status field is merged
-only if:
+Status changes must satisfy the state machine. A direct `payload.status` update
+is also subject to the set-like timestamp rule for `status`.
 
-- The transition is allowed from the current state.
-- The status field is not obsolete.
+Derived status changes from payment/refund events are handled by the business
+rule for that event type:
 
-## Tie-Breaker
-
-If two events for the same field have the same timestamp, the first accepted event
-wins. The second event is rejected for that field unless it is a duplicate by
-`eventId`.
+- payment moves `CREATED -> PAID`,
+- refunds move `PAID -> PARTIALLY_REFUNDED | REFUNDED`,
+- refunds can continue from `PARTIALLY_REFUNDED`.
 
 ## Money Fields
 
-Money is stored and merged as integer minor units:
+The public API accepts decimal money values, for example `199.99`. The engine
+stores them as integer minor units, for example `19999`.
 
-- `amount_minor`.
-- `paid_amount_minor`.
-- `refunded_amount_minor`.
-
-The API accepts decimal money fields, such as `amount`, and the processing layer
-maps them to internal minor-unit fields before merge.
-
-## Why This Strategy
-
-This approach gives predictable behavior, keeps old useful data from being lost,
-and allows the API to explain exactly why each field was applied or skipped.
+Accepted money fields must be non-negative decimals with at most two fractional
+digits. Refund and payment event amounts must be positive.

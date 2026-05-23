@@ -1,6 +1,6 @@
 # Edge Cases
 
-The engine must make every important decision explicit and auditable.
+Every important engine decision is written to the audit log.
 
 ## Duplicate Event
 
@@ -16,17 +16,21 @@ Event type is not supported.
 
 Decision: `REJECTED`.
 
-Action: store event as invalid and write audit decision.
+Action: store the raw delivery and write `UNKNOWN_EVENT_TYPE`.
 
-## Update Before Create
+## Event Before Create
 
-An update arrives for an unknown order.
+An update, payment, cancellation, or refund arrives for an unknown order.
 
-Decision: `REJECTED`.
+Decision: `DEFERRED`.
 
-Action: do not create an order implicitly from update-like events.
+Action: keep the event pending with reason `ORDER_NOT_READY`. It is retried after
+future ingestions. This avoids permanently losing valid out-of-order events.
 
-Exception: `ORDER_CREATED` creates the order.
+## Create After Deferred Event
+
+If an `ORDER_CREATED` event later creates the order, phase 2 retries deferred
+events. In a single batch this can happen inside the same `POST /events` call.
 
 ## Cancelled Order Receives Payment
 
@@ -34,19 +38,20 @@ Exception: `ORDER_CREATED` creates the order.
 
 Decision: `REJECTED`.
 
-Action: preserve `CANCELLED` state and audit forbidden transition.
+Action: preserve `CANCELLED` state and audit `FORBIDDEN_TRANSITION`.
 
 ## Refund Before Payment
 
-`REFUND_ISSUED` arrives before any captured payment.
+`REFUND_ISSUED` arrives before captured payment.
 
-Decision: `REJECTED`.
+Decision: `REJECTED` if the order exists, or `DEFERRED` if the order does not
+exist yet.
 
-Action: refund amount in minor units cannot exceed paid amount in minor units.
+Action: do not change order state.
 
 ## Partial Refund
 
-Refund amount in minor units is lower than paid amount in minor units.
+Refund total is lower than captured payment.
 
 Decision: `ACCEPTED`.
 
@@ -54,24 +59,31 @@ Action: status becomes `PARTIALLY_REFUNDED`.
 
 ## Full Refund
 
-Refunded amount in minor units equals paid amount in minor units.
+Refund total equals captured payment.
 
 Decision: `ACCEPTED`.
 
 Action: status becomes `REFUNDED`.
 
+## Refund Exceeds Payment
+
+Refund total would exceed captured payment.
+
+Decision: `REJECTED`.
+
+Action: preserve current state and audit `REFUND_EXCEEDS_CAPTURED`.
+
 ## Late Partial Payload
 
-Old event contains a field that has not been updated by newer events.
+Older event contains multiple fields.
 
-Decision: `PARTIALLY_APPLIED` or `ACCEPTED`.
+Decision: `PARTIALLY_APPLIED` when at least one field is still useful.
 
-Action: apply only non-obsolete fields.
+Action: apply non-obsolete fields and skip obsolete fields.
 
 ## Conflicting Amount
 
-Two valid events set different amounts in minor units.
+Two accepted events set different order amounts.
 
-Decision: latest field timestamp wins.
-
-Action: skipped fields are written to audit details.
+Decision: strictly newer timestamp wins for `amountMinor`. Same timestamp keeps
+the first accepted value.

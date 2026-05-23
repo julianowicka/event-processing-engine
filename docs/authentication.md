@@ -1,36 +1,26 @@
 # Authentication
 
-Authentication is implemented after the event engine, persistence, and tests are
-stable.
+Authentication is intentionally out of scope for the recruitment-task MVP.
 
-## Approach
+The task requires the business API and a short README. Adding mandatory
+authentication would make evaluator calls harder because every sample request
+would need an API key.
 
-Use a NestJS guard with API key authentication for machine-to-machine access.
+## Current Behavior
 
-## Implementation Plan
+- `POST /events` is public.
+- `GET /orders/:id` is public.
+- `GET /stats` is public.
+- `GET /health` is public.
+
+## Future Option
+
+If machine-to-machine protection is needed later:
 
 - Add an `AuthModule`.
 - Add an `ApiKeyGuard`.
-- Require `X-API-Key` on protected endpoints.
-- Store the expected key in an environment variable.
-- Validate that the key exists during application startup.
-- Compare keys using a timing-safe comparison.
-- Return `401 Unauthorized` when the key is missing or invalid.
-- Keep `GET /health` unprotected for monitoring and deployment checks.
+- Require `X-API-Key` on business endpoints.
+- Store the expected key in `API_KEY`.
+- Keep `GET /health` public.
 
-## Protected Endpoints
-
-- `POST /events`
-- `GET /orders/:id`
-- `GET /stats`
-
-## Public Endpoints
-
-- `GET /health`
-
-## Configuration
-
-- `API_KEY`: required secret used by clients.
-
-Tests should override configuration through the NestJS testing module instead of
-hardcoding secrets.
+Authentication should be disabled by default for local recruitment evaluation.
