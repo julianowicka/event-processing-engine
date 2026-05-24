@@ -8,11 +8,16 @@ business rules.
 - `EventsController`: `POST /events`.
 - `EventIngestionService`: phase 1 raw delivery storage and job creation.
 - `EventWorkerService`: background polling and worker nudging.
-- `EventProcessingService`: phase 2 domain processing.
+- `EventProcessingService`: phase 2 processing orchestrator.
+- `EventJobRepository`: processing job claiming, status, retry, and deferred
+  job lifecycle.
+- `OrderRepository` and `EventAuditRepository`: SQL persistence helpers for
+  order state, deduplication, history, decisions, stats, and DLQ records.
+- `EventValidationService`, `OrderStateMachineService`, `OrderMergeService`,
+  and `EventDecisionService`: SQL-free processing rules and decision helpers.
 - `OrdersController` and `OrdersService`: current state, history, and audit.
 - `StatsController` and `StatsService`: counters and timing.
 - `SqliteService`: SQLite persistence boundary.
-- `StateMachineService`: status transition rules.
 
 ## Maintainability Rules
 
