@@ -6,84 +6,1014 @@ import * as path from 'node:path';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
+import { SqliteService } from './../src/database/sqlite.service';
+import type {
+  EventDetailsResponse,
+  QueueEventsResponse,
+} from './../src/events/event.types';
+import type { OrderDetailsResponse } from './../src/orders/orders.types';
 
-describe('Event engine API (e2e)', () => {
+describe('Event ingestion API (e2e)', () => {
   let app: INestApplication<App>;
   let directory: string;
 
   beforeEach(async () => {
-    directory = fs.mkdtempSync(path.join(os.tmpdir(), 'event-engine-e2e-'));
-    process.env.EVENT_ENGINE_DB_FILE = path.join(directory, 'database.json');
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), 'events-api-e2e-'));
+    process.env.SQLITE_DB_PATH = path.join(directory, 'database.sqlite');
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
 
     app = moduleFixture.createNestApplication();
+    app.setGlobalPrefix('api');
     await app.init();
   });
 
-  it('queues events and exposes order state after background processing', async () => {
+  it('queues every event item in a hostile batch', async () => {
+    const hostileBatch = [
+      {
+        eventId: 'evt-hard-002',
+        orderId: 'ord-hard-501',
+        type: 'PAYMENT_CAPTURED',
+        timestamp: 1710001200,
+        payload: { amount: 199.99 },
+      },
+      {
+        eventId: 'evt-hard-001',
+        orderId: 'ord-hard-501',
+        type: 'ORDER_CREATED',
+        timestamp: 1710001100,
+        payload: { amount: 199.99, currency: 'PLN' },
+      },
+      {
+        eventId: 'evt-hard-002',
+        orderId: 'ord-hard-501',
+        type: 'PAYMENT_CAPTURED',
+        timestamp: 1710001200,
+        payload: { amount: 199.99 },
+      },
+      {
+        eventId: 'evt-hard-003',
+        orderId: 'ord-hard-501',
+        type: 'ORDER_UPDATED',
+        timestamp: 1710001000,
+        payload: { amount: 149.99, currency: 'EUR' },
+      },
+      {
+        eventId: 'evt-hard-004',
+        orderId: 'ord-hard-501',
+        type: 'ORDER_UPDATED',
+        timestamp: 1710001300,
+        payload: { status: 'CANCELLED', amount: 249.99 },
+      },
+      {
+        eventId: '',
+        orderId: 'ord-hard-501',
+        type: 'REFUND_ISSUED',
+        timestamp: 1710001400,
+        payload: { refundAmount: -30 },
+      },
+      {
+        orderId: 'ord-hard-501',
+        type: 'ALIEN_SIGNAL',
+        timestamp: 'not-a-number',
+        payload: null,
+      },
+      'not even an object',
+      null,
+    ];
+
     await request(app.getHttpServer())
-      .post('/events')
-      .send([
-        {
-          eventId: 'evt-create',
-          orderId: 'ord-e2e',
-          type: 'ORDER_CREATED',
-          timestamp: 100,
-          payload: { amount: 25, currency: 'PLN' },
-        },
-        {
-          eventId: 'evt-payment',
-          orderId: 'ord-e2e',
-          type: 'PAYMENT_CAPTURED',
-          timestamp: 200,
-          payload: { amount: 25 },
-        },
-      ])
+      .post('/api/events')
+      .send(hostileBatch)
       .expect(201)
       .expect((response) => {
-        const body = response.body as {
-          mode: string;
-          results: Array<{ status: string }>;
-          summary: { queued: number };
-        };
-        expect(body.mode).toBe('ASYNC_WORKER');
-        expect(body.summary.queued).toBe(2);
-        expect(body.results.map((item) => item.status)).toEqual([
-          'QUEUED',
-          'QUEUED',
-        ]);
+        const body = response.body as QueueEventsResponse;
+
+        expect(body).toMatchObject({
+          mode: 'ASYNC_WORKER',
+          summary: { queued: hostileBatch.length },
+        });
+        expect(body.results).toHaveLength(hostileBatch.length);
+        expect(body.results[0]).toMatchObject({
+          incomingEventId: 1,
+          processingJobId: 1,
+          eventId: 'evt-hard-002',
+          orderId: 'ord-hard-501',
+          type: 'PAYMENT_CAPTURED',
+          status: 'QUEUED',
+          processingTimeMs: 0,
+        });
+        expect(body.results[5]).toMatchObject({
+          eventId: null,
+          type: 'REFUND_ISSUED',
+        });
+        expect(body.results[7]).toMatchObject({
+          eventId: null,
+          orderId: null,
+          type: null,
+        });
       });
 
-    const body = await waitForOrder('ord-e2e');
-    expect(body.currentState).toMatchObject({
-      status: 'PAID',
-      amountMinor: 2500,
-      paidAmountMinor: 2500,
+    const stats = await waitForStats({
+      processedEventsCount: hostileBatch.length,
     });
+
+    expect(stats).toMatchObject({
+      rawDeliveriesCount: hostileBatch.length,
+      queuedJobsCount: hostileBatch.length,
+      pendingEventsCount: 0,
+      validEventsCount: 3,
+      acceptedEventsCount: 2,
+      partiallyAppliedEventsCount: 1,
+      processedEventsCount: hostileBatch.length,
+      duplicateEventsCount: 1,
+      rejectedEventsCount: 5,
+    });
+
+    const db = app.get(SqliteService).connection;
+
+    expect(
+      db
+        .prepare(
+          `
+            SELECT status, amount_minor, paid_amount_minor, refunded_amount_minor
+            FROM orders
+            WHERE order_id = ?
+          `,
+        )
+        .get('ord-hard-501'),
+    ).toMatchObject({
+      status: 'PAID',
+      amount_minor: 24999,
+      paid_amount_minor: 19999,
+      refunded_amount_minor: 0,
+    });
+
+    expect(
+      db
+        .prepare(
+          `
+            SELECT decision, reason_code, COUNT(*) AS count
+            FROM event_decisions
+            GROUP BY decision, reason_code
+            ORDER BY decision, reason_code
+          `,
+        )
+        .all(),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          decision: 'ACCEPTED',
+          reason_code: 'APPLIED',
+          count: 2,
+        }),
+        expect.objectContaining({
+          decision: 'PARTIALLY_APPLIED',
+          reason_code: 'PARTIAL_MERGE',
+          count: 1,
+        }),
+        expect.objectContaining({
+          decision: 'DUPLICATE',
+          reason_code: 'DUPLICATE_EVENT',
+          count: 1,
+        }),
+        expect.objectContaining({
+          decision: 'DEFERRED',
+          reason_code: 'ORDER_NOT_READY',
+          count: 1,
+        }),
+      ]),
+    );
+  });
+
+  it('rejects a non-array request body', async () => {
+    await request(app.getHttpServer())
+      .post('/api/events')
+      .send({ eventId: 'evt-not-a-batch' })
+      .expect(400);
+  });
+
+  it('recovers refund and payment events that arrive before order creation', async () => {
+    const outOfOrderBatch = [
+      {
+        eventId: 'evt-recover-003',
+        orderId: 'ord-recover-001',
+        type: 'REFUND_ISSUED',
+        timestamp: 1710003000,
+        payload: { refundAmount: 30 },
+      },
+      {
+        eventId: 'evt-recover-002',
+        orderId: 'ord-recover-001',
+        type: 'PAYMENT_CAPTURED',
+        timestamp: 1710002000,
+        payload: { amount: 120 },
+      },
+      {
+        eventId: 'evt-recover-001',
+        orderId: 'ord-recover-001',
+        type: 'ORDER_CREATED',
+        timestamp: 1710001000,
+        payload: { amount: 120, currency: 'PLN' },
+      },
+    ];
+
+    await request(app.getHttpServer())
+      .post('/api/events')
+      .send(outOfOrderBatch)
+      .expect(201)
+      .expect((response) => {
+        const body = response.body as QueueEventsResponse;
+
+        expect(body.summary).toMatchObject({ queued: 3 });
+      });
+
+    const stats = await waitForStats({ processedEventsCount: 3 });
+
+    expect(stats).toMatchObject({
+      rawDeliveriesCount: 3,
+      queuedJobsCount: 3,
+      pendingEventsCount: 0,
+      validEventsCount: 3,
+      acceptedEventsCount: 3,
+      rejectedEventsCount: 0,
+      duplicateEventsCount: 0,
+    });
+
+    const db = app.get(SqliteService).connection;
+
+    expect(
+      db
+        .prepare(
+          `
+            SELECT status, paid_amount_minor, refunded_amount_minor
+            FROM orders
+            WHERE order_id = ?
+          `,
+        )
+        .get('ord-recover-001'),
+    ).toMatchObject({
+      status: 'PARTIALLY_REFUNDED',
+      paid_amount_minor: 12000,
+      refunded_amount_minor: 3000,
+    });
+
+    expect(
+      db
+        .prepare(
+          `
+            SELECT decision, reason_code, COUNT(*) AS count
+            FROM event_decisions
+            GROUP BY decision, reason_code
+            ORDER BY decision, reason_code
+          `,
+        )
+        .all(),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          decision: 'ACCEPTED',
+          reason_code: 'APPLIED',
+          count: 3,
+        }),
+        expect.objectContaining({
+          decision: 'DEFERRED',
+          reason_code: 'ORDER_NOT_READY',
+          count: 3,
+        }),
+      ]),
+    );
+  });
+
+  it('keeps valid stress and forbidden transition scenarios isolated', async () => {
+    const stressOrderId = 'ord-ui-stress-001';
+    const forbiddenOrderId = 'ord-ui-state-001';
+    const stressBatch = [
+      {
+        eventId: 'evt-ui-stress-002',
+        orderId: stressOrderId,
+        type: 'PAYMENT_CAPTURED',
+        timestamp: 1710002000,
+        payload: { amount: 120 },
+      },
+      {
+        eventId: 'evt-ui-stress-001',
+        orderId: stressOrderId,
+        type: 'ORDER_CREATED',
+        timestamp: 1710001000,
+        payload: { amount: 120, currency: 'PLN' },
+      },
+      {
+        eventId: 'evt-ui-stress-003',
+        orderId: stressOrderId,
+        type: 'ORDER_UPDATED',
+        timestamp: 1710003000,
+        payload: { amount: 130 },
+      },
+      {
+        eventId: 'evt-ui-stress-004',
+        orderId: stressOrderId,
+        type: 'ORDER_UPDATED',
+        timestamp: 1710002500,
+        payload: { amount: 125, currency: 'EUR' },
+      },
+      {
+        eventId: 'evt-ui-stress-005',
+        orderId: stressOrderId,
+        type: 'REFUND_ISSUED',
+        timestamp: 1710004000,
+        payload: { refundAmount: 30 },
+      },
+      {
+        eventId: 'evt-ui-stress-003',
+        orderId: stressOrderId,
+        type: 'ORDER_UPDATED',
+        timestamp: 1710003000,
+        payload: { amount: 130 },
+      },
+    ];
+    const forbiddenBatch = [
+      {
+        eventId: 'evt-ui-state-001',
+        orderId: forbiddenOrderId,
+        type: 'ORDER_CREATED',
+        timestamp: 1710004000,
+        payload: { amount: 80, currency: 'PLN' },
+      },
+      {
+        eventId: 'evt-ui-state-002',
+        orderId: forbiddenOrderId,
+        type: 'ORDER_CANCELLED',
+        timestamp: 1710004100,
+        payload: {},
+      },
+      {
+        eventId: 'evt-ui-state-003',
+        orderId: forbiddenOrderId,
+        type: 'PAYMENT_CAPTURED',
+        timestamp: 1710004200,
+        payload: { amount: 80 },
+      },
+      {
+        eventId: 'evt-ui-state-004',
+        orderId: forbiddenOrderId,
+        type: 'REFUND_ISSUED',
+        timestamp: 1710004300,
+        payload: { refundAmount: 80 },
+      },
+    ];
+
+    await request(app.getHttpServer())
+      .post('/api/events')
+      .send(stressBatch)
+      .expect(201)
+      .expect((response) => {
+        const body = response.body as QueueEventsResponse;
+
+        expect(body.summary).toMatchObject({ queued: 6 });
+      });
+
+    await waitForStats({ processedEventsCount: 6 });
+
+    const statsAfterStress = await request(app.getHttpServer())
+      .get('/api/stats')
+      .expect(200)
+      .then((response) => response.body as Record<string, number>);
+
+    expect(statsAfterStress).toMatchObject({
+      rawDeliveriesCount: 6,
+      queuedJobsCount: 6,
+      pendingEventsCount: 0,
+      validEventsCount: 5,
+      acceptedEventsCount: 4,
+      partiallyAppliedEventsCount: 1,
+      processedEventsCount: 6,
+      duplicateEventsCount: 1,
+      rejectedEventsCount: 0,
+    });
+
+    await request(app.getHttpServer())
+      .post('/api/events')
+      .send(forbiddenBatch)
+      .expect(201)
+      .expect((response) => {
+        const body = response.body as QueueEventsResponse;
+
+        expect(body.summary).toMatchObject({ queued: 4 });
+      });
+
+    const statsAfterForbidden = await waitForStats({
+      processedEventsCount: 10,
+    });
+
+    expect(statsAfterForbidden).toMatchObject({
+      rawDeliveriesCount: 10,
+      queuedJobsCount: 10,
+      pendingEventsCount: 0,
+      validEventsCount: 7,
+      acceptedEventsCount: 6,
+      partiallyAppliedEventsCount: 1,
+      processedEventsCount: 10,
+      duplicateEventsCount: 1,
+      rejectedEventsCount: 2,
+    });
+
+    const db = app.get(SqliteService).connection;
+
+    expect(
+      db
+        .prepare(
+          `
+            SELECT COUNT(*) AS count
+            FROM event_decisions
+            WHERE order_id = ?
+              AND decision = 'REJECTED'
+          `,
+        )
+        .get(stressOrderId),
+    ).toMatchObject({ count: 0 });
+
+    expect(
+      db
+        .prepare(
+          `
+            SELECT reason_code, COUNT(*) AS count
+            FROM event_decisions
+            WHERE order_id = ?
+              AND decision = 'REJECTED'
+            GROUP BY reason_code
+          `,
+        )
+        .get(forbiddenOrderId),
+    ).toMatchObject({
+      reason_code: 'FORBIDDEN_TRANSITION',
+      count: 2,
+    });
+  });
+
+  it('returns current state, history, rejected decisions and audit log for an order', async () => {
+    const orderId = 'ord-read-model-001';
+    const batch = [
+      {
+        eventId: 'evt-read-model-001',
+        orderId,
+        type: 'ORDER_CREATED',
+        timestamp: 1710004000,
+        payload: { amount: 80, currency: 'PLN' },
+      },
+      {
+        eventId: 'evt-read-model-002',
+        orderId,
+        type: 'ORDER_CANCELLED',
+        timestamp: 1710004100,
+        payload: {},
+      },
+      {
+        eventId: 'evt-read-model-003',
+        orderId,
+        type: 'PAYMENT_CAPTURED',
+        timestamp: 1710004200,
+        payload: { amount: 80 },
+      },
+      {
+        eventId: 'evt-read-model-004',
+        orderId,
+        type: 'REFUND_ISSUED',
+        timestamp: 1710004300,
+        payload: { refundAmount: 80 },
+      },
+    ];
+
+    await request(app.getHttpServer())
+      .post('/api/events')
+      .send(batch)
+      .expect(201);
+
+    await waitForStats({ processedEventsCount: 4 });
+
+    await request(app.getHttpServer())
+      .get(`/api/orders/${orderId}`)
+      .expect(200)
+      .expect((response) => {
+        const body = response.body as OrderDetailsResponse;
+
+        expect(body).toMatchObject({
+          orderId,
+          currentState: {
+            orderId,
+            status: 'CANCELLED',
+            amountMinor: 8000,
+            currency: 'PLN',
+            paidAmountMinor: 0,
+            refundedAmountMinor: 0,
+            version: 2,
+          },
+          pendingJobs: [],
+        });
+        expect(body.history).toHaveLength(2);
+        expect(body.history).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              eventId: 'evt-read-model-001',
+              type: 'ORDER_CREATED',
+              fromStatus: null,
+              toStatus: 'CREATED',
+              decision: 'ACCEPTED',
+              reasonCode: 'APPLIED',
+              changedFields: {
+                status: 'CREATED',
+                amountMinor: 8000,
+                currency: 'PLN',
+              },
+            }),
+            expect.objectContaining({
+              eventId: 'evt-read-model-002',
+              type: 'ORDER_CANCELLED',
+              fromStatus: 'CREATED',
+              toStatus: 'CANCELLED',
+              decision: 'ACCEPTED',
+              reasonCode: 'APPLIED',
+              changedFields: { status: 'CANCELLED' },
+            }),
+          ]),
+        );
+        expect(body.rejectedEvents).toEqual([
+          expect.objectContaining({
+            eventId: 'evt-read-model-003',
+            type: 'PAYMENT_CAPTURED',
+            decision: 'REJECTED',
+            reasonCode: 'FORBIDDEN_TRANSITION',
+          }),
+          expect.objectContaining({
+            eventId: 'evt-read-model-004',
+            type: 'REFUND_ISSUED',
+            decision: 'REJECTED',
+            reasonCode: 'FORBIDDEN_TRANSITION',
+          }),
+        ]);
+        expect(body.auditLog).toHaveLength(4);
+      });
+  });
+
+  it('returns audit and pending job data when the order does not exist yet', async () => {
+    const orderId = 'ord-read-deferred-001';
+
+    await request(app.getHttpServer())
+      .post('/api/events')
+      .send([
+        {
+          eventId: 'evt-read-deferred-001',
+          orderId,
+          type: 'PAYMENT_CAPTURED',
+          timestamp: 1710002000,
+          payload: { amount: 120 },
+        },
+      ])
+      .expect(201);
+
+    const order = await waitForOrder(orderId);
+
+    expect(order).toMatchObject({
+      orderId,
+      currentState: null,
+      history: [],
+      rejectedEvents: [],
+    });
+    expect(order.auditLog).toEqual([
+      expect.objectContaining({
+        eventId: 'evt-read-deferred-001',
+        orderId,
+        type: 'PAYMENT_CAPTURED',
+        decision: 'DEFERRED',
+        reasonCode: 'ORDER_NOT_READY',
+      }),
+    ]);
+    expect(order.pendingJobs).toHaveLength(1);
+    expect(order.pendingJobs[0]).toMatchObject({
+      status: 'DEFERRED',
+      eventId: 'evt-read-deferred-001',
+      orderId,
+      type: 'PAYMENT_CAPTURED',
+      lastReasonCode: 'ORDER_NOT_READY',
+    });
+    expect(order.pendingJobs[0].latestDecision).toMatchObject({
+      decision: 'DEFERRED',
+      reasonCode: 'ORDER_NOT_READY',
+    });
+  });
+
+  it('returns 404 for a completely unknown order', async () => {
+    await request(app.getHttpServer())
+      .get('/api/orders/ord-does-not-exist')
+      .expect(404);
+  });
+
+  it('returns raw deliveries, decisions and history for one event id', async () => {
+    const orderId = 'ord-event-inspector-001';
+    const eventId = 'evt-event-inspector-001';
+    const batch = [
+      {
+        eventId,
+        orderId,
+        type: 'ORDER_CREATED',
+        timestamp: 1710001000,
+        payload: { amount: 70, currency: 'PLN' },
+      },
+      {
+        eventId,
+        orderId,
+        type: 'ORDER_CREATED',
+        timestamp: 1710001000,
+        payload: { amount: 70, currency: 'PLN' },
+      },
+    ];
+
+    await request(app.getHttpServer())
+      .post('/api/events')
+      .send(batch)
+      .expect(201);
+
+    await waitForStats({ processedEventsCount: 2 });
+
+    await request(app.getHttpServer())
+      .get(`/api/events/${eventId}`)
+      .expect(200)
+      .expect((response) => {
+        const body = response.body as EventDetailsResponse;
+
+        expect(body).toMatchObject({
+          eventId,
+          orderIds: [orderId],
+        });
+        expect(body.deliveries).toHaveLength(2);
+        expect(body.deliveries[0]).toMatchObject({
+          eventId,
+          orderId,
+          type: 'ORDER_CREATED',
+          processingJob: {
+            status: 'DONE',
+            latestDecision: {
+              decision: 'ACCEPTED',
+              reasonCode: 'APPLIED',
+            },
+          },
+        });
+        expect(body.deliveries[1]).toMatchObject({
+          eventId,
+          orderId,
+          type: 'ORDER_CREATED',
+          processingJob: {
+            status: 'DONE',
+            latestDecision: {
+              decision: 'DUPLICATE',
+              reasonCode: 'DUPLICATE_EVENT',
+            },
+          },
+        });
+        expect(body.decisions).toEqual([
+          expect.objectContaining({
+            decision: 'ACCEPTED',
+            reasonCode: 'APPLIED',
+          }),
+          expect.objectContaining({
+            decision: 'DUPLICATE',
+            reasonCode: 'DUPLICATE_EVENT',
+          }),
+        ]);
+        expect(body.history).toEqual([
+          expect.objectContaining({
+            orderId,
+            eventId,
+            type: 'ORDER_CREATED',
+            toStatus: 'CREATED',
+            changedFields: {
+              status: 'CREATED',
+              amountMinor: 7000,
+              currency: 'PLN',
+            },
+          }),
+        ]);
+      });
+  });
+
+  it('returns 404 for a completely unknown event id', async () => {
+    await request(app.getHttpServer())
+      .get('/api/events/evt-does-not-exist')
+      .expect(404);
+  });
+
+  it('treats a repeated forbidden batch as duplicate deliveries', async () => {
+    const orderId = 'ord-repeat-state-001';
+    const forbiddenBatch = [
+      {
+        eventId: 'evt-repeat-state-001',
+        orderId,
+        type: 'ORDER_CREATED',
+        timestamp: 1710004000,
+        payload: { amount: 80, currency: 'PLN' },
+      },
+      {
+        eventId: 'evt-repeat-state-002',
+        orderId,
+        type: 'ORDER_CANCELLED',
+        timestamp: 1710004100,
+        payload: {},
+      },
+      {
+        eventId: 'evt-repeat-state-003',
+        orderId,
+        type: 'PAYMENT_CAPTURED',
+        timestamp: 1710004200,
+        payload: { amount: 80 },
+      },
+      {
+        eventId: 'evt-repeat-state-004',
+        orderId,
+        type: 'REFUND_ISSUED',
+        timestamp: 1710004300,
+        payload: { refundAmount: 80 },
+      },
+    ];
+
+    await request(app.getHttpServer())
+      .post('/api/events')
+      .send(forbiddenBatch)
+      .expect(201);
+
+    await waitForStats({ processedEventsCount: 4 });
+
+    await request(app.getHttpServer())
+      .post('/api/events')
+      .send(forbiddenBatch)
+      .expect(201);
+
+    const stats = await waitForStats({ processedEventsCount: 8 });
+
+    expect(stats).toMatchObject({
+      rawDeliveriesCount: 8,
+      queuedJobsCount: 8,
+      pendingEventsCount: 0,
+      acceptedEventsCount: 2,
+      rejectedEventsCount: 2,
+      duplicateEventsCount: 4,
+    });
+
+    const db = app.get(SqliteService).connection;
+
+    expect(
+      db
+        .prepare(
+          `
+            SELECT reason_code, COUNT(*) AS count
+            FROM event_decisions
+            WHERE order_id = ?
+            GROUP BY reason_code
+            ORDER BY reason_code
+          `,
+        )
+        .all(orderId),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          reason_code: 'APPLIED',
+          count: 2,
+        }),
+        expect.objectContaining({
+          reason_code: 'DUPLICATE_EVENT',
+          count: 4,
+        }),
+        expect.objectContaining({
+          reason_code: 'FORBIDDEN_TRANSITION',
+          count: 2,
+        }),
+      ]),
+    );
+  });
+
+  it('preserves missing fields and partially merges stale field updates', async () => {
+    const orderId = 'ord-partial-fields-001';
+    const batch = [
+      {
+        eventId: 'evt-partial-fields-001',
+        orderId,
+        type: 'ORDER_CREATED',
+        timestamp: 1710001000,
+        payload: { amount: 100, currency: 'PLN' },
+      },
+      {
+        eventId: 'evt-partial-fields-003',
+        orderId,
+        type: 'ORDER_UPDATED',
+        timestamp: 1710003000,
+        payload: { amount: 150 },
+      },
+      {
+        eventId: 'evt-partial-fields-002',
+        orderId,
+        type: 'ORDER_UPDATED',
+        timestamp: 1710002000,
+        payload: { amount: 120, currency: 'EUR' },
+      },
+    ];
+
+    await request(app.getHttpServer())
+      .post('/api/events')
+      .send(batch)
+      .expect(201);
+
+    const stats = await waitForStats({ processedEventsCount: 3 });
+
+    expect(stats).toMatchObject({
+      rawDeliveriesCount: 3,
+      queuedJobsCount: 3,
+      pendingEventsCount: 0,
+      validEventsCount: 3,
+      acceptedEventsCount: 2,
+      partiallyAppliedEventsCount: 1,
+      rejectedEventsCount: 0,
+    });
+
+    const db = app.get(SqliteService).connection;
+
+    expect(
+      db
+        .prepare(
+          `
+            SELECT status, amount_minor, currency
+            FROM orders
+            WHERE order_id = ?
+          `,
+        )
+        .get(orderId),
+    ).toMatchObject({
+      status: 'CREATED',
+      amount_minor: 15000,
+      currency: 'EUR',
+    });
+
+    const partialDecision = db
+      .prepare(
+        `
+          SELECT decision, reason_code, details_json
+          FROM event_decisions
+          WHERE event_id = ?
+        `,
+      )
+      .get('evt-partial-fields-002') as {
+      decision: string;
+      reason_code: string;
+      details_json: string;
+    };
+
+    expect(partialDecision).toMatchObject({
+      decision: 'PARTIALLY_APPLIED',
+      reason_code: 'PARTIAL_MERGE',
+    });
+    expect(JSON.parse(partialDecision.details_json)).toMatchObject({
+      changedFields: { currency: 'EUR' },
+      skippedFields: { amountMinor: 'OBSOLETE_FIELD' },
+    });
+  });
+
+  it('rejects repeated payment capture and refunds above captured amount', async () => {
+    const orderId = 'ord-payment-guards-001';
+    const batch = [
+      {
+        eventId: 'evt-payment-guards-001',
+        orderId,
+        type: 'ORDER_CREATED',
+        timestamp: 1710001000,
+        payload: { amount: 50, currency: 'PLN' },
+      },
+      {
+        eventId: 'evt-payment-guards-002',
+        orderId,
+        type: 'PAYMENT_CAPTURED',
+        timestamp: 1710002000,
+        payload: { amount: 50 },
+      },
+      {
+        eventId: 'evt-payment-guards-003',
+        orderId,
+        type: 'PAYMENT_CAPTURED',
+        timestamp: 1710003000,
+        payload: { amount: 50 },
+      },
+      {
+        eventId: 'evt-payment-guards-004',
+        orderId,
+        type: 'REFUND_ISSUED',
+        timestamp: 1710004000,
+        payload: { refundAmount: 60 },
+      },
+    ];
+
+    await request(app.getHttpServer())
+      .post('/api/events')
+      .send(batch)
+      .expect(201);
+
+    const stats = await waitForStats({ processedEventsCount: 4 });
+
+    expect(stats).toMatchObject({
+      rawDeliveriesCount: 4,
+      queuedJobsCount: 4,
+      pendingEventsCount: 0,
+      acceptedEventsCount: 2,
+      rejectedEventsCount: 2,
+      duplicateEventsCount: 0,
+    });
+
+    const db = app.get(SqliteService).connection;
+
+    expect(
+      db
+        .prepare(
+          `
+            SELECT status, paid_amount_minor, refunded_amount_minor
+            FROM orders
+            WHERE order_id = ?
+          `,
+        )
+        .get(orderId),
+    ).toMatchObject({
+      status: 'PAID',
+      paid_amount_minor: 5000,
+      refunded_amount_minor: 0,
+    });
+
+    expect(
+      db
+        .prepare(
+          `
+            SELECT reason_code, COUNT(*) AS count
+            FROM event_decisions
+            WHERE order_id = ?
+              AND decision = 'REJECTED'
+            GROUP BY reason_code
+            ORDER BY reason_code
+          `,
+        )
+        .all(orderId),
+    ).toEqual([
+      expect.objectContaining({
+        reason_code: 'PAYMENT_ALREADY_CAPTURED',
+        count: 1,
+      }),
+      expect.objectContaining({
+        reason_code: 'REFUND_EXCEEDS_CAPTURED',
+        count: 1,
+      }),
+    ]);
   });
 
   afterEach(async () => {
     await app.close();
     fs.rmSync(directory, { recursive: true, force: true });
-    delete process.env.EVENT_ENGINE_DB_FILE;
+    delete process.env.SQLITE_DB_PATH;
   });
 
-  async function waitForOrder(orderId: string) {
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      const response = await request(app.getHttpServer()).get(
-        `/orders/${orderId}`,
+  async function waitForStats(
+    expected: Partial<Record<string, number>>,
+  ): Promise<Record<string, number>> {
+    let latest: Record<string, number> = {};
+
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      latest = await request(app.getHttpServer())
+        .get('/api/stats')
+        .expect(200)
+        .then((response) => response.body as Record<string, number>);
+
+      const matched = Object.entries(expected).every(
+        ([key, value]) => latest[key] === value,
       );
 
-      if (response.status === 200) {
-        return response.body as { currentState: Record<string, unknown> };
+      if (matched) {
+        return latest;
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 25));
+      await new Promise((resolve) => setTimeout(resolve, 50));
     }
 
-    throw new Error(`Order ${orderId} was not processed in time`);
+    return latest;
+  }
+
+  async function waitForOrder(orderId: string): Promise<OrderDetailsResponse> {
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      const response = await request(app.getHttpServer()).get(
+        `/api/orders/${orderId}`,
+      );
+      const body = response.body as Partial<OrderDetailsResponse>;
+
+      if (response.status === 200 && (body.auditLog?.length ?? 0) > 0) {
+        return body as OrderDetailsResponse;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    throw new Error(`Order ${orderId} was not available in time`);
   }
 });
