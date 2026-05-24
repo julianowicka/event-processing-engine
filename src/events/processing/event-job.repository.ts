@@ -1,15 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { DatabaseSync as DatabaseSyncInstance } from 'node:sqlite';
+import { asSqliteRow } from '../../database/sqlite-row.util';
 import { SqliteService } from '../../database/sqlite.service';
+import { verboseLog } from '../event-verbose-logger';
 import type { ProcessingJobRow, ReasonCode } from '../event.types';
 
 @Injectable()
 export class EventJobRepository {
   private readonly logger = new Logger(EventJobRepository.name);
   private readonly db: DatabaseSyncInstance;
-  private readonly verboseLogs =
-    process.env.EVENT_WORKER_VERBOSE_LOGS === 'true' ||
-    process.env.EVENT_WORKER_VERBOSE_LOGS === '1';
   private readonly deferredRetryMs = 60_000;
   private readonly retryDelayMs = 3_000;
   private readonly lockTimeoutMs = Number(
@@ -66,9 +65,10 @@ export class EventJobRepository {
         return null;
       }
 
-      const job = this.db
-        .prepare(
-          `
+      const job = asSqliteRow<ProcessingJobRow>(
+        this.db
+          .prepare(
+            `
             SELECT
               jobs.id AS job_id,
               jobs.raw_incoming_event_id,
@@ -85,10 +85,15 @@ export class EventJobRepository {
             JOIN raw_incoming_events raw ON raw.id = jobs.raw_incoming_event_id
             WHERE jobs.id = ?
           `,
-        )
-        .get(claimed.id) as unknown as ProcessingJobRow;
+          )
+          .get(claimed.id),
+      );
 
-      this.verboseLog('claimed job', {
+      if (!job) {
+        return null;
+      }
+
+      verboseLog(this.logger, 'claimed job', {
         jobId: job.job_id,
         rawIncomingEventId: job.raw_incoming_event_id,
         eventId: job.event_id,
@@ -232,7 +237,7 @@ export class EventJobRepository {
         this.workerId,
       );
 
-    this.verboseLog('technical retry scheduled', {
+    verboseLog(this.logger, 'technical retry scheduled', {
       jobId: job.job_id,
       rawIncomingEventId: job.raw_incoming_event_id,
       attempts,
@@ -271,13 +276,5 @@ export class EventJobRepository {
         job.job_id,
         this.workerId,
       );
-  }
-
-  private verboseLog(message: string, details: Record<string, unknown>): void {
-    if (!this.verboseLogs) {
-      return;
-    }
-
-    this.logger.log(`${message} ${JSON.stringify(details)}`);
   }
 }

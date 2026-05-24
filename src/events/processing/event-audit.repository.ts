@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { DatabaseSync as DatabaseSyncInstance } from 'node:sqlite';
+import type { JsonObject } from '../../common/json.types';
 import { SqliteService } from '../../database/sqlite.service';
+import { verboseLog } from '../event-verbose-logger';
 import type {
   EngineDecision,
   OrderStatus,
@@ -14,9 +16,6 @@ import type { DecisionInput, DecisionResult } from './event-processing.types';
 export class EventAuditRepository {
   private readonly logger = new Logger(EventAuditRepository.name);
   private readonly db: DatabaseSyncInstance;
-  private readonly verboseLogs =
-    process.env.EVENT_WORKER_VERBOSE_LOGS === 'true' ||
-    process.env.EVENT_WORKER_VERBOSE_LOGS === '1';
 
   constructor(sqliteService: SqliteService) {
     this.db = sqliteService.connection;
@@ -58,7 +57,7 @@ export class EventAuditRepository {
         new Date().toISOString(),
       );
 
-    this.verboseLog('decision written', {
+    verboseLog(this.logger, 'decision written', {
       decisionId: Number(result.lastInsertRowid),
       jobId: input.job.job_id,
       rawIncomingEventId: input.job.raw_incoming_event_id,
@@ -114,8 +113,8 @@ export class EventAuditRepository {
     event: ValidOrderEvent,
     fromStatus: OrderStatus | null,
     toStatus: OrderStatus,
-    changedFields: Record<string, unknown>,
-    skippedFields: Record<string, unknown>,
+    changedFields: JsonObject,
+    skippedFields: JsonObject,
     decision: 'ACCEPTED' | 'PARTIALLY_APPLIED',
     reasonCode: ReasonCode,
   ): void {
@@ -193,13 +192,5 @@ export class EventAuditRepository {
         attempts,
         new Date().toISOString(),
       );
-  }
-
-  private verboseLog(message: string, details: Record<string, unknown>): void {
-    if (!this.verboseLogs) {
-      return;
-    }
-
-    this.logger.log(`${message} ${JSON.stringify(details)}`);
   }
 }

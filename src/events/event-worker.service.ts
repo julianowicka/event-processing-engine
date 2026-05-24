@@ -1,41 +1,26 @@
-import {
-  Injectable,
-  Logger,
-  OnModuleDestroy,
-  OnModuleInit,
-} from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Interval } from '@nestjs/schedule';
 import { EventProcessingService } from './event-processing.service';
+import { verboseLog } from './event-verbose-logger';
+
+const workerIntervalMs = Number(process.env.EVENT_WORKER_INTERVAL_MS ?? 1000);
 
 @Injectable()
-export class EventWorkerService implements OnModuleInit, OnModuleDestroy {
+export class EventWorkerService implements OnModuleInit {
   private readonly logger = new Logger(EventWorkerService.name);
-  private readonly verboseLogs =
-    process.env.EVENT_WORKER_VERBOSE_LOGS === 'true' ||
-    process.env.EVENT_WORKER_VERBOSE_LOGS === '1';
-  private timer: ReturnType<typeof setInterval> | undefined;
   private running = false;
-  private rerunRequested = false;
 
   constructor(
     private readonly eventProcessingService: EventProcessingService,
   ) {}
 
   onModuleInit(): void {
-    if (process.env.EVENT_WORKER_ENABLED === 'false') {
-      this.verboseLog('worker disabled', {});
-      return;
-    }
-
-    const intervalMs = Number(process.env.EVENT_WORKER_INTERVAL_MS ?? 1000);
-    this.timer = setInterval(() => this.nudge(), intervalMs);
-    this.verboseLog('worker started', { intervalMs });
-    this.nudge();
+    verboseLog(this.logger, 'worker started', { intervalMs: workerIntervalMs });
   }
 
-  onModuleDestroy(): void {
-    if (this.timer) {
-      clearInterval(this.timer);
-    }
+  @Interval(workerIntervalMs)
+  poll(): void {
+    this.runAvailableWork();
   }
 
   nudge(): void {
@@ -44,8 +29,6 @@ export class EventWorkerService implements OnModuleInit, OnModuleDestroy {
 
   private runAvailableWork(): void {
     if (this.running) {
-      this.rerunRequested = true;
-      this.verboseLog('worker rerun requested while busy', {});
       return;
     }
 
@@ -53,31 +36,22 @@ export class EventWorkerService implements OnModuleInit, OnModuleDestroy {
 
     try {
       let processedJobs = 0;
-      let outcome = this.eventProcessingService.processNextAvailableJob();
 
-      while (outcome && processedJobs < 500) {
+      while (processedJobs < 500) {
+        const outcome = this.eventProcessingService.processNextAvailableJob();
+
+        if (!outcome) {
+          break;
+        }
+
         processedJobs += 1;
-        outcome = this.eventProcessingService.processNextAvailableJob();
       }
 
       if (processedJobs > 0) {
-        this.verboseLog('worker pass completed', { processedJobs });
+        verboseLog(this.logger, 'worker pass completed', { processedJobs });
       }
     } finally {
       this.running = false;
-
-      if (this.rerunRequested) {
-        this.rerunRequested = false;
-        this.nudge();
-      }
     }
-  }
-
-  private verboseLog(message: string, details: Record<string, unknown>): void {
-    if (!this.verboseLogs) {
-      return;
-    }
-
-    this.logger.log(`${message} ${JSON.stringify(details)}`);
   }
 }
