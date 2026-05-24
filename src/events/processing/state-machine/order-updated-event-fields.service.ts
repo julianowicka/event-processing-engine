@@ -1,17 +1,17 @@
 import { Injectable } from '@nestjs/common';
-import type { OrderRow, ValidOrderEvent } from '../event.types';
-import type { FieldChangeSet, NextOrderState } from './event-processing.types';
-import { EventValidationService } from './event-validation.service';
-import { OrderStateMachineService } from './order-state-machine.service';
+import type { OrderRow, ValidOrderEvent } from '../../event.types';
+import type { FieldChangeSet, NextOrderState } from '../event-processing.types';
+import { EventValidationService } from '../event-validation.service';
+import { OrderStatusTransitionRulesService } from './order-status-transition-rules.service';
 
 @Injectable()
-export class OrderMergeService {
+export class OrderUpdatedEventFieldsService {
   constructor(
     private readonly validationService: EventValidationService,
-    private readonly stateMachineService: OrderStateMachineService,
+    private readonly statusTransitionRules: OrderStatusTransitionRulesService,
   ) {}
 
-  buildOrderUpdatedMutation(
+  buildChangesFromOrderUpdatedEvent(
     event: ValidOrderEvent,
     order: OrderRow,
     canApplyField: (fieldName: string) => boolean,
@@ -52,7 +52,7 @@ export class OrderMergeService {
       if (!canApplyField('status')) {
         fields.skipped.status = 'OBSOLETE_FIELD';
       } else if (
-        !this.stateMachineService.canApplyEventTransition(
+        !this.statusTransitionRules.canEventChangeStatus(
           event.type,
           order.status,
           requestedStatus,

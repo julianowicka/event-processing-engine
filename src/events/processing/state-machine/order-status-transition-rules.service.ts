@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { OrderStatus, SupportedEventType } from '../event.types';
+import type { OrderStatus, SupportedEventType } from '../../event.types';
 
 type ConceptualOrderStatus = 'NEW' | OrderStatus;
 type EventTransition = {
@@ -8,7 +8,7 @@ type EventTransition = {
 };
 
 @Injectable()
-export class OrderStateMachineService {
+export class OrderStatusTransitionRulesService {
   private readonly allowedTransitions: Record<OrderStatus, OrderStatus[]> = {
     CREATED: ['PAID', 'CANCELLED'],
     PAID: ['PARTIALLY_REFUNDED', 'REFUNDED'],
@@ -36,7 +36,7 @@ export class OrderStateMachineService {
     ],
   };
 
-  canTransition(from: OrderStatus, to: OrderStatus): boolean {
+  canChangeStatus(from: OrderStatus, to: OrderStatus): boolean {
     if (from === to) {
       return true;
     }
@@ -44,7 +44,7 @@ export class OrderStateMachineService {
     return this.allowedTransitions[from].includes(to);
   }
 
-  canApplyEventTransition(
+  canEventChangeStatus(
     eventType: SupportedEventType,
     from: ConceptualOrderStatus,
     to: OrderStatus,
@@ -60,7 +60,7 @@ export class OrderStateMachineService {
     );
   }
 
-  getAllowedTransitions(from: OrderStatus): OrderStatus[] {
+  getAllowedStatusChanges(from: OrderStatus): OrderStatus[] {
     return [...this.allowedTransitions[from]];
   }
 }

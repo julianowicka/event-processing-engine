@@ -14,11 +14,11 @@ import {
   DecisionDescription,
   FieldChangeSet,
   NextOrderState,
-  OrderEventApplicationResult,
+  OrderEventStateMachineResult,
 } from './processing/event-processing.types';
 import { EventValidationService } from './processing/event-validation.service';
-import { OrderEventApplicationService } from './processing/order-event-application.service';
 import { OrderRepository } from './processing/order.repository';
+import { OrderEventStateMachineService } from './processing/state-machine/order-event-state-machine.service';
 
 @Injectable()
 export class EventProcessingService {
@@ -30,7 +30,7 @@ export class EventProcessingService {
     private readonly orderRepository: OrderRepository,
     private readonly auditRepository: EventAuditRepository,
     private readonly validationService: EventValidationService,
-    private readonly orderApplicationService: OrderEventApplicationService,
+    private readonly orderEventStateMachine: OrderEventStateMachineService,
     private readonly decisionService: EventDecisionService,
   ) {}
 
@@ -44,7 +44,8 @@ export class EventProcessingService {
     try {
       return this.sqliteService.transaction(() => this.processBusinessJob(job));
     } catch (error) {
-      this.recordTechnicalFailure(job, error);
+      const message = error instanceof Error ? error.message : String(error);
+      this.recordTechnicalFailure(job, message);
       return { orderChanged: false };
     }
   }
@@ -91,7 +92,7 @@ export class EventProcessingService {
       return { orderChanged: false };
     }
 
-    const result = this.orderApplicationService.apply(event, {
+    const result = this.orderEventStateMachine.apply(event, {
       order,
       canApplyField: (fieldName) =>
         this.orderRepository.canApplyField(event.orderId, fieldName, event),
@@ -108,7 +109,7 @@ export class EventProcessingService {
   private finishApplicationResult(
     job: ProcessingJobRow,
     event: ValidOrderEvent,
-    result: OrderEventApplicationResult,
+    result: OrderEventStateMachineResult,
     startedAt: number,
   ): ProcessJobOutcome {
     switch (result.kind) {
@@ -290,13 +291,15 @@ export class EventProcessingService {
     this.jobRepository.markDeferred(job, result.decisionId);
   }
 
-  private recordTechnicalFailure(job: ProcessingJobRow, error: unknown): void {
+  private recordTechnicalFailure(
+    job: ProcessingJobRow,
+    errorMessage: string,
+  ): void {
     this.sqliteService.transaction(() => {
       const attempts = job.attempts + 1;
-      const message = error instanceof Error ? error.message : String(error);
 
       if (attempts >= this.maxAttempts) {
-        const decision = this.decisionService.processingError(message);
+        const decision = this.decisionService.processingError(errorMessage);
         const result = this.auditRepository.writeDecision({
           job,
           event: this.validationService.partialEventFromJob(job),
@@ -307,17 +310,17 @@ export class EventProcessingService {
         });
 
         this.auditRepository.updateFinalStats('FAILED', 0);
-        this.auditRepository.insertDeadLetterEvent(job, message, attempts);
+        this.auditRepository.insertDeadLetterEvent(job, errorMessage, attempts);
         this.jobRepository.markDeadLettered(
           job,
           attempts,
-          message,
+          errorMessage,
           result.decisionId,
         );
         return;
       }
 
-      this.jobRepository.scheduleTechnicalRetry(job, attempts, message);
+      this.jobRepository.scheduleTechnicalRetry(job, attempts, errorMessage);
     });
   }
 }

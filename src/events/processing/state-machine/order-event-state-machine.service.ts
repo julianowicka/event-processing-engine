@@ -1,29 +1,29 @@
 import { Injectable } from '@nestjs/common';
-import type { OrderRow, OrderStatus, ValidOrderEvent } from '../event.types';
-import { EventDecisionService } from './event-decision.service';
+import type { OrderRow, OrderStatus, ValidOrderEvent } from '../../event.types';
+import { EventDecisionService } from '../event-decision.service';
 import type {
   FieldChangeSet,
   NextOrderState,
-  OrderEventApplicationContext,
-  OrderEventApplicationResult,
-} from './event-processing.types';
-import { EventValidationService } from './event-validation.service';
-import { OrderMergeService } from './order-merge.service';
-import { OrderStateMachineService } from './order-state-machine.service';
+  OrderEventStateMachineContext,
+  OrderEventStateMachineResult,
+} from '../event-processing.types';
+import { EventValidationService } from '../event-validation.service';
+import { OrderStatusTransitionRulesService } from './order-status-transition-rules.service';
+import { OrderUpdatedEventFieldsService } from './order-updated-event-fields.service';
 
 @Injectable()
-export class OrderEventApplicationService {
+export class OrderEventStateMachineService {
   constructor(
     private readonly validationService: EventValidationService,
-    private readonly stateMachineService: OrderStateMachineService,
-    private readonly mergeService: OrderMergeService,
+    private readonly statusTransitionRules: OrderStatusTransitionRulesService,
+    private readonly orderUpdatedEventFields: OrderUpdatedEventFieldsService,
     private readonly decisionService: EventDecisionService,
   ) {}
 
   apply(
     event: ValidOrderEvent,
-    context: OrderEventApplicationContext,
-  ): OrderEventApplicationResult {
+    context: OrderEventStateMachineContext,
+  ): OrderEventStateMachineResult {
     switch (event.type) {
       case 'ORDER_CREATED':
         return this.applyOrderCreated(event, context.order);
@@ -41,7 +41,7 @@ export class OrderEventApplicationService {
   private applyOrderCreated(
     event: ValidOrderEvent,
     existingOrder: OrderRow | null,
-  ): OrderEventApplicationResult {
+  ): OrderEventStateMachineResult {
     if (existingOrder) {
       return {
         kind: 'REJECTED',
@@ -73,17 +73,18 @@ export class OrderEventApplicationService {
 
   private applyOrderUpdated(
     event: ValidOrderEvent,
-    context: OrderEventApplicationContext,
-  ): OrderEventApplicationResult {
+    context: OrderEventStateMachineContext,
+  ): OrderEventStateMachineResult {
     if (!context.order) {
       return this.orderNotReady(event);
     }
 
-    const mutation = this.mergeService.buildOrderUpdatedMutation(
-      event,
-      context.order,
-      context.canApplyField,
-    );
+    const mutation =
+      this.orderUpdatedEventFields.buildChangesFromOrderUpdatedEvent(
+        event,
+        context.order,
+        (fieldName) => context.canApplyField(fieldName),
+      );
 
     return {
       kind: 'MUTATION',
@@ -95,8 +96,8 @@ export class OrderEventApplicationService {
 
   private applyPaymentCaptured(
     event: ValidOrderEvent,
-    context: OrderEventApplicationContext,
-  ): OrderEventApplicationResult {
+    context: OrderEventStateMachineContext,
+  ): OrderEventStateMachineResult {
     if (!context.order) {
       return this.orderNotReady(event);
     }
@@ -123,7 +124,7 @@ export class OrderEventApplicationService {
     }
 
     if (
-      !this.stateMachineService.canApplyEventTransition(
+      !this.statusTransitionRules.canEventChangeStatus(
         event.type,
         order.status,
         'PAID',
@@ -153,8 +154,8 @@ export class OrderEventApplicationService {
 
   private applyOrderCancelled(
     event: ValidOrderEvent,
-    context: OrderEventApplicationContext,
-  ): OrderEventApplicationResult {
+    context: OrderEventStateMachineContext,
+  ): OrderEventStateMachineResult {
     if (!context.order) {
       return this.orderNotReady(event);
     }
@@ -162,7 +163,7 @@ export class OrderEventApplicationService {
     const order = context.order;
 
     if (
-      !this.stateMachineService.canApplyEventTransition(
+      !this.statusTransitionRules.canEventChangeStatus(
         event.type,
         order.status,
         'CANCELLED',
@@ -192,8 +193,8 @@ export class OrderEventApplicationService {
 
   private applyRefundIssued(
     event: ValidOrderEvent,
-    context: OrderEventApplicationContext,
-  ): OrderEventApplicationResult {
+    context: OrderEventStateMachineContext,
+  ): OrderEventStateMachineResult {
     if (!context.order) {
       return this.orderNotReady(event);
     }
@@ -241,7 +242,7 @@ export class OrderEventApplicationService {
         : 'PARTIALLY_REFUNDED';
 
     if (
-      !this.stateMachineService.canApplyEventTransition(
+      !this.statusTransitionRules.canEventChangeStatus(
         event.type,
         order.status,
         nextStatus,
@@ -276,7 +277,7 @@ export class OrderEventApplicationService {
     order: OrderRow,
     nextState: NextOrderState,
     fields: FieldChangeSet,
-  ): OrderEventApplicationResult {
+  ): OrderEventStateMachineResult {
     return {
       kind: 'MUTATION',
       order,
@@ -285,7 +286,7 @@ export class OrderEventApplicationService {
     };
   }
 
-  private orderNotReady(event: ValidOrderEvent): OrderEventApplicationResult {
+  private orderNotReady(event: ValidOrderEvent): OrderEventStateMachineResult {
     return {
       kind: 'DEFERRED',
       decision: this.decisionService.orderNotReady(event),
