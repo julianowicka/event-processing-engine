@@ -5,13 +5,11 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import request from 'supertest';
 import { App } from 'supertest/types';
-import { AppModule } from './../src/app.module';
-import { SqliteService } from './../src/database/sqlite.service';
-import type {
-  EventDetailsResponse,
-  QueueEventsResponse,
-} from './../src/events/event.types';
-import type { OrderDetailsResponse } from './../src/orders/orders.types';
+import { AppModule } from '../../src/app.module';
+import { SqliteService } from '../../src/database/sqlite.service';
+import type { EventDetailsResponse } from '../../src/events/event.types';
+import type { QueueEventsResponse } from '../../src/events/events.types';
+import type { OrderDetailsResponse } from '../../src/orders/orders.types';
 
 describe('Event ingestion API (e2e)', () => {
   let app: INestApplication<App>;

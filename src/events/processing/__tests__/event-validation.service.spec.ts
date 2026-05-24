@@ -1,5 +1,7 @@
-import { EventValidationService } from './event-validation.service';
-import type { ProcessingJobRow } from '../event.types';
+import type { JsonValue } from '../../../common/json.types';
+import { isJsonObject } from '../../../common/json.util';
+import { EventValidationService } from '../event-validation.service';
+import type { ProcessingJobRow } from '../../event.types';
 
 describe('EventValidationService', () => {
   const service = new EventValidationService();
@@ -53,7 +55,9 @@ describe('EventValidationService', () => {
     });
   });
 
-  function jobFromRaw(raw: unknown): ProcessingJobRow {
+  function jobFromRaw(raw: JsonValue): ProcessingJobRow {
+    const record = isJsonObject(raw) ? raw : null;
+
     return {
       job_id: 1,
       raw_incoming_event_id: 1,
@@ -62,25 +66,30 @@ describe('EventValidationService', () => {
       locked_by: null,
       locked_at: null,
       raw_event_json: JSON.stringify(raw),
-      event_id:
-        typeof raw === 'object' && raw !== null && 'eventId' in raw
-          ? String((raw as { eventId: unknown }).eventId)
-          : null,
-      order_id:
-        typeof raw === 'object' && raw !== null && 'orderId' in raw
-          ? String((raw as { orderId: unknown }).orderId)
-          : null,
-      type:
-        typeof raw === 'object' && raw !== null && 'type' in raw
-          ? String((raw as { type: unknown }).type)
-          : null,
+      event_id: record ? readString(record.eventId) : null,
+      order_id: record ? readString(record.orderId) : null,
+      type: record ? readString(record.type) : null,
       event_timestamp:
-        typeof raw === 'object' &&
-        raw !== null &&
-        'timestamp' in raw &&
-        typeof (raw as { timestamp: unknown }).timestamp === 'number'
-          ? (raw as { timestamp: number }).timestamp
+        record && typeof record.timestamp === 'number'
+          ? record.timestamp
           : null,
     };
+  }
+
+  function readString(value: JsonValue | undefined): string | null {
+    if (value === undefined) {
+      return null;
+    }
+
+    if (
+      typeof value === 'string' ||
+      typeof value === 'number' ||
+      typeof value === 'boolean' ||
+      value === null
+    ) {
+      return String(value);
+    }
+
+    return JSON.stringify(value) ?? null;
   }
 });

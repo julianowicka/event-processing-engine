@@ -1,16 +1,17 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { SqliteService } from '../database/sqlite.service';
-import { EventProcessingService } from './event-processing.service';
-import { EventAuditRepository } from './processing/event-audit.repository';
-import { EventDecisionService } from './processing/event-decision.service';
-import { EventJobRepository } from './processing/event-job.repository';
-import { EventValidationService } from './processing/event-validation.service';
-import { OrderEventApplicationService } from './processing/order-event-application.service';
-import { OrderMergeService } from './processing/order-merge.service';
-import { OrderRepository } from './processing/order.repository';
-import { OrderStateMachineService } from './processing/order-state-machine.service';
+import type { JsonObject } from '../../common/json.types';
+import { SqliteService } from '../../database/sqlite.service';
+import { EventProcessingService } from '../event-processing.service';
+import { EventAuditRepository } from '../processing/event-audit.repository';
+import { EventDecisionService } from '../processing/event-decision.service';
+import { EventJobRepository } from '../processing/event-job.repository';
+import { EventValidationService } from '../processing/event-validation.service';
+import { OrderRepository } from '../processing/order.repository';
+import { OrderEventStateMachineService } from '../processing/state-machine/order-event-state-machine.service';
+import { OrderStatusTransitionRulesService } from '../processing/state-machine/order-status-transition-rules.service';
+import { OrderUpdatedEventFieldsService } from '../processing/state-machine/order-updated-event-fields.service';
 
 describe('EventProcessingService payment and refund guards', () => {
   let directory: string;
@@ -26,10 +27,10 @@ describe('EventProcessingService payment and refund guards', () => {
     sqliteService = new SqliteService();
 
     const validationService = new EventValidationService();
-    const stateMachineService = new OrderStateMachineService();
-    const mergeService = new OrderMergeService(
+    const statusTransitionRules = new OrderStatusTransitionRulesService();
+    const orderUpdatedEventFields = new OrderUpdatedEventFieldsService(
       validationService,
-      stateMachineService,
+      statusTransitionRules,
     );
     const decisionService = new EventDecisionService();
     service = new EventProcessingService(
@@ -38,10 +39,10 @@ describe('EventProcessingService payment and refund guards', () => {
       new OrderRepository(sqliteService),
       new EventAuditRepository(sqliteService),
       validationService,
-      new OrderEventApplicationService(
+      new OrderEventStateMachineService(
         validationService,
-        stateMachineService,
-        mergeService,
+        statusTransitionRules,
+        orderUpdatedEventFields,
         decisionService,
       ),
       decisionService,
@@ -111,7 +112,7 @@ describe('EventProcessingService payment and refund guards', () => {
     orderId: string;
     type: string;
     timestamp: number;
-    payload: Record<string, unknown>;
+    payload: JsonObject;
   }): void {
     const now = new Date().toISOString();
     const db = sqliteService.connection;
