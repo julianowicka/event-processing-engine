@@ -8,8 +8,6 @@ Same `eventId` appears again.
 
 Decision: `DUPLICATE`.
 
-
-
 Action: store the raw delivery, create a processing job, skip state changes,
 write a `DUPLICATE` audit decision, and mark the job as `DONE`.
 

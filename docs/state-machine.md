@@ -3,6 +3,10 @@
 The order status state machine is explicit and small. It prevents impossible
 business transitions such as `CANCELLED -> PAID`.
 
+Implementation uses an explicit dispatcher with one handler strategy for each
+supported event type. Shared transition and merge policy services keep the
+individual handlers focused on the rule for their event.
+
 ## States
 
 - `CREATED`: order exists and no payment has been captured.

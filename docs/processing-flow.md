@@ -29,13 +29,13 @@ The worker runs on a short interval and can also be nudged after ingestion.
 2. Validate event shape and payload.
 3. Claim the `eventId` deduplication key. If the key is already claimed, write a
    `DUPLICATE` decision and mark the job as `DONE`.
-4. If the order does not exist and the event is not `ORDER_CREATED`, write a
-   `DEFERRED` audit decision and mark the job as `DEFERRED`.
-5. Apply state-machine rules.
-6. Apply field-level merge rules for set-like fields.
-7. Apply cumulative payment/refund rules for financial facts.
-8. Write order state, history, audit decision, and stats.
-9. Mark final jobs as `DONE`.
+4. Dispatch a valid event to its event-specific order handler.
+5. The handler evaluates missing-order deferral, state transitions, field-level
+   merge rules, or cumulative payment/refund rules as appropriate.
+6. Pass the evaluated outcome to the completion service.
+7. The completion service writes order state, history, audit decisions, and
+   stats, or marks a deferred job for retry.
+8. Mark final jobs as `DONE`.
 
 If a pass creates or changes an order, the worker runs another pass. This allows
 an event that arrived before its `ORDER_CREATED` event to be retried after the
@@ -46,10 +46,11 @@ create event is processed.
 Business decisions are final and are not retried. `DEFERRED` jobs are retried
 when the worker runs again.
 
-Unexpected technical failures are retried up to `3` attempts. Failed jobs stay
-`PENDING` until their next `available_at`. After the third technical failure,
-the job is marked `DEAD_LETTERED`, a `FAILED` audit decision is written, and a
-record is stored in `dead_letter_events`.
+Unexpected technical failures are handed to the completion service and retried
+up to `3` attempts. Failed jobs stay `PENDING` until their next `available_at`.
+After the third technical failure, the job is marked `DEAD_LETTERED`, a
+`FAILED` audit decision is written, and a record is stored in
+`dead_letter_events`.
 
 ## Determinism
 

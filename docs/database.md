@@ -26,9 +26,6 @@ The domain logic should stay independent from storage mechanics. State-machine
 rules, merge rules, worker retry policy, and API contracts should be expressed
 in services, while SQL details stay inside the persistence layer.
 
-
-
-
 ## Inbox Model
 
 Raw delivery storage and processing state are separated.

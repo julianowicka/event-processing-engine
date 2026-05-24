@@ -2,7 +2,6 @@
 
 The API is asynchronous from the caller's perspective. `POST /events` stores raw
 
-
 deliveries, creates processing jobs, and returns a queued response. A background
 worker then processes available jobs in raw delivery order.
 

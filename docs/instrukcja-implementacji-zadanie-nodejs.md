@@ -626,73 +626,73 @@ Testy jednostkowe sa opcjonalne, ale jako bonus point warto pokryc:
 
 Ponizsza lista mapuje informacje z pliku zrodlowego na sekcje tej instrukcji.
 
-| Informacja ze zrodla | Gdzie jest w instrukcji |
-| --- | --- |
-| Zadanie rekrutacyjne | Sekcja 1 |
-| Kandydat powinien spedzic okolo 6-10 godzin | Sekcja 1 |
-| Czas na wykonanie to 3 MD | Sekcja 1 |
-| W razie braku czasu oddac dzialajacy fragment | Sekcje 1 i 13 |
-| Temat: Event Processing Engine | Sekcja 1 |
-| Firma ma wiele zewnetrznych integracji | Sekcja 2 |
-| Eventy przychodza asynchronicznie | Sekcja 2 |
-| Event moze pojawic sie wielokrotnie | Sekcje 2, 4 i 6.1 |
-| Event moze przyjsc w zlej kolejnosci | Sekcje 2, 4 i 6.2 |
-| Event moze zostac opozniony | Sekcje 2, 4 i 6.2 |
-| Event moze czesciowo nadpisywac poprzedni stan | Sekcje 2, 4 i 6.4 |
-| Stworzenie silnika dla systemu zamowien | Sekcje 2, 4 i 14 |
-| Format JSON eventu | Sekcja 3 |
-| `eventId` | Sekcje 3 i 6.1 |
-| `orderId` | Sekcja 3 |
-| `type` | Sekcja 3 |
-| `timestamp` | Sekcje 3 i 6.2 |
-| `payload.status` i `payload.amount` | Sekcje 3, 6.3, 6.4 i 9 |
-| Typ `ORDER_CREATED` | Sekcje 3 i 9.1 |
-| Typ `ORDER_UPDATED` | Sekcje 3 i 9.2 |
-| Typ `PAYMENT_CAPTURED` | Sekcje 3 i 9.3 |
-| Typ `ORDER_CANCELLED` | Sekcje 3 i 9.4 |
-| Typ `REFUND_ISSUED` | Sekcje 3 i 9.5 |
-| Eventy moga miec konfliktujace dane | Sekcje 4, 6.2 i 11 |
-| Nie wszystkie eventy sa poprawne | Sekcje 4 i 7 |
-| Czesc eventow moze byc przestarzala | Sekcje 4 i 6.2 |
-| System utrzymuje aktualny stan zamowienia | Sekcje 4, 8.3 i 14 |
-| System utrzymuje historie zmian | Sekcje 4, 8.4 i 14 |
-| System utrzymuje audit log decyzji | Sekcje 4, 8.5 i 14 |
-| System zapisuje surowe dostawy eventow | Sekcje 8.1, 11 i 14 |
-| System utrzymuje techniczny status przetwarzania | Sekcje 8.2, 11 i 14 |
-| `POST /events` przyjmuje batch eventow | Sekcja 5.1 |
-| `GET /orders/:id` zwraca aktualny stan | Sekcja 5.2 |
-| `GET /orders/:id` zwraca historie zmian | Sekcja 5.2 |
-| `GET /orders/:id` zwraca odrzucone eventy i powody | Sekcja 5.2 |
-| `GET /stats` zwraca liczbe poprawnych eventow | Sekcja 5.3 |
-| `GET /stats` zwraca liczbe odrzuconych eventow | Sekcja 5.3 |
-| `GET /stats` zwraca liczbe duplikatow | Sekcja 5.3 |
-| `GET /stats` zwraca sredni czas przetwarzania | Sekcja 5.3 |
-| Deduplication: istniejacy `eventId` ignorowac | Sekcja 6.1 |
-| Deduplication: zapisac w audit logu | Sekcja 6.1 |
-| Ordering: starszy event wymaga decyzji | Sekcja 6.2 |
-| Ordering: odrzucic/czesciowo zastosowac/zmergowac | Sekcja 6.2 |
-| Kandydat proponuje strategie ordering | Sekcja 6.2 |
-| Niedozwolone przejscia stanu | Sekcja 6.3 |
-| Przyklad `CANCELLED -> PAID` niemozliwe | Sekcja 6.3 |
-| Przyklad `PAID -> REFUNDED` poprawne | Sekcja 6.3 |
-| Kandydat definiuje state machine | Sekcja 6.3 |
-| Partial updates z czescia danych | Sekcja 6.4 |
-| Przyklad `payload.amount = 250` | Sekcja 6.4 |
-| Brakujace pola nie moga byc usuwane | Sekcja 6.4 |
-| Wymagany Node.js | Sekcja 10 |
-| Wymagany TypeScript | Sekcja 10 |
-| Wymagany Yarn | Sekcja 10 |
-| Wymagana lokalna baza SQLite | Sekcja 10 |
-| Testy jednostkowe opcjonalne jako bonus | Sekcje 10 i 15 |
-| Krotkie README z zalozeniami i uruchomieniem | Sekcje 10 i 12 |
-| Mozna uzyc Express | Sekcja 10 |
-| Mozna uzyc Fastify | Sekcja 10 |
-| Mozna uzyc Nest | Sekcja 10 |
-| Mozna uzyc wlasnego minimalnego rozwiazania | Sekcja 10 |
-| Nie uzywac ORM generujacych cala logike | Sekcja 10 |
-| Nie uzywac gotowych workflow engine | Sekcja 10 |
-| Nie uzywac event sourcing frameworkow | Sekcja 10 |
-| Kod we wlasnym repozytorium GitHub | Sekcje 1 i 14 |
+| Informacja ze zrodla                               | Gdzie jest w instrukcji |
+| -------------------------------------------------- | ----------------------- |
+| Zadanie rekrutacyjne                               | Sekcja 1                |
+| Kandydat powinien spedzic okolo 6-10 godzin        | Sekcja 1                |
+| Czas na wykonanie to 3 MD                          | Sekcja 1                |
+| W razie braku czasu oddac dzialajacy fragment      | Sekcje 1 i 13           |
+| Temat: Event Processing Engine                     | Sekcja 1                |
+| Firma ma wiele zewnetrznych integracji             | Sekcja 2                |
+| Eventy przychodza asynchronicznie                  | Sekcja 2                |
+| Event moze pojawic sie wielokrotnie                | Sekcje 2, 4 i 6.1       |
+| Event moze przyjsc w zlej kolejnosci               | Sekcje 2, 4 i 6.2       |
+| Event moze zostac opozniony                        | Sekcje 2, 4 i 6.2       |
+| Event moze czesciowo nadpisywac poprzedni stan     | Sekcje 2, 4 i 6.4       |
+| Stworzenie silnika dla systemu zamowien            | Sekcje 2, 4 i 14        |
+| Format JSON eventu                                 | Sekcja 3                |
+| `eventId`                                          | Sekcje 3 i 6.1          |
+| `orderId`                                          | Sekcja 3                |
+| `type`                                             | Sekcja 3                |
+| `timestamp`                                        | Sekcje 3 i 6.2          |
+| `payload.status` i `payload.amount`                | Sekcje 3, 6.3, 6.4 i 9  |
+| Typ `ORDER_CREATED`                                | Sekcje 3 i 9.1          |
+| Typ `ORDER_UPDATED`                                | Sekcje 3 i 9.2          |
+| Typ `PAYMENT_CAPTURED`                             | Sekcje 3 i 9.3          |
+| Typ `ORDER_CANCELLED`                              | Sekcje 3 i 9.4          |
+| Typ `REFUND_ISSUED`                                | Sekcje 3 i 9.5          |
+| Eventy moga miec konfliktujace dane                | Sekcje 4, 6.2 i 11      |
+| Nie wszystkie eventy sa poprawne                   | Sekcje 4 i 7            |
+| Czesc eventow moze byc przestarzala                | Sekcje 4 i 6.2          |
+| System utrzymuje aktualny stan zamowienia          | Sekcje 4, 8.3 i 14      |
+| System utrzymuje historie zmian                    | Sekcje 4, 8.4 i 14      |
+| System utrzymuje audit log decyzji                 | Sekcje 4, 8.5 i 14      |
+| System zapisuje surowe dostawy eventow             | Sekcje 8.1, 11 i 14     |
+| System utrzymuje techniczny status przetwarzania   | Sekcje 8.2, 11 i 14     |
+| `POST /events` przyjmuje batch eventow             | Sekcja 5.1              |
+| `GET /orders/:id` zwraca aktualny stan             | Sekcja 5.2              |
+| `GET /orders/:id` zwraca historie zmian            | Sekcja 5.2              |
+| `GET /orders/:id` zwraca odrzucone eventy i powody | Sekcja 5.2              |
+| `GET /stats` zwraca liczbe poprawnych eventow      | Sekcja 5.3              |
+| `GET /stats` zwraca liczbe odrzuconych eventow     | Sekcja 5.3              |
+| `GET /stats` zwraca liczbe duplikatow              | Sekcja 5.3              |
+| `GET /stats` zwraca sredni czas przetwarzania      | Sekcja 5.3              |
+| Deduplication: istniejacy `eventId` ignorowac      | Sekcja 6.1              |
+| Deduplication: zapisac w audit logu                | Sekcja 6.1              |
+| Ordering: starszy event wymaga decyzji             | Sekcja 6.2              |
+| Ordering: odrzucic/czesciowo zastosowac/zmergowac  | Sekcja 6.2              |
+| Kandydat proponuje strategie ordering              | Sekcja 6.2              |
+| Niedozwolone przejscia stanu                       | Sekcja 6.3              |
+| Przyklad `CANCELLED -> PAID` niemozliwe            | Sekcja 6.3              |
+| Przyklad `PAID -> REFUNDED` poprawne               | Sekcja 6.3              |
+| Kandydat definiuje state machine                   | Sekcja 6.3              |
+| Partial updates z czescia danych                   | Sekcja 6.4              |
+| Przyklad `payload.amount = 250`                    | Sekcja 6.4              |
+| Brakujace pola nie moga byc usuwane                | Sekcja 6.4              |
+| Wymagany Node.js                                   | Sekcja 10               |
+| Wymagany TypeScript                                | Sekcja 10               |
+| Wymagany Yarn                                      | Sekcja 10               |
+| Wymagana lokalna baza SQLite                       | Sekcja 10               |
+| Testy jednostkowe opcjonalne jako bonus            | Sekcje 10 i 15          |
+| Krotkie README z zalozeniami i uruchomieniem       | Sekcje 10 i 12          |
+| Mozna uzyc Express                                 | Sekcja 10               |
+| Mozna uzyc Fastify                                 | Sekcja 10               |
+| Mozna uzyc Nest                                    | Sekcja 10               |
+| Mozna uzyc wlasnego minimalnego rozwiazania        | Sekcja 10               |
+| Nie uzywac ORM generujacych cala logike            | Sekcja 10               |
+| Nie uzywac gotowych workflow engine                | Sekcja 10               |
+| Nie uzywac event sourcing frameworkow              | Sekcja 10               |
+| Kod we wlasnym repozytorium GitHub                 | Sekcje 1 i 14           |
 
 Wniosek z kontroli: wszystkie informacje wymaganiowe z `docs/zadanie_nodejs`
 maja jawne odwzorowanie w tej instrukcji.
