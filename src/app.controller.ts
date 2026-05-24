@@ -1,23 +1,15 @@
 import { Controller, Get } from '@nestjs/common';
-import { JsonDatabaseService } from './persistence/json-database.service';
+import { SqliteService } from './database/sqlite.service';
 
 @Controller()
 export class AppController {
-  constructor(private readonly database: JsonDatabaseService) {}
-
-  @Get()
-  getRoot() {
-    return {
-      name: 'event-processing-engine',
-      status: 'ok',
-    };
-  }
+  constructor(private readonly sqliteService: SqliteService) {}
 
   @Get('health')
-  getHealth() {
+  health(): { status: 'ok'; database: string; timestamp: string } {
     return {
       status: 'ok',
-      database: this.database.isReady() ? 'ok' : 'unavailable',
+      database: this.sqliteService.path,
       timestamp: new Date().toISOString(),
     };
   }

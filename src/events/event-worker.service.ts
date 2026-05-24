@@ -9,65 +9,75 @@ import { EventProcessingService } from './event-processing.service';
 @Injectable()
 export class EventWorkerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(EventWorkerService.name);
-  private readonly intervalMs = readPositiveNumber(
-    process.env.EVENT_ENGINE_WORKER_INTERVAL_MS,
-    100,
-  );
-  private timer: NodeJS.Timeout | null = null;
+  private readonly verboseLogs =
+    process.env.EVENT_WORKER_VERBOSE_LOGS === 'true' ||
+    process.env.EVENT_WORKER_VERBOSE_LOGS === '1';
+  private timer: ReturnType<typeof setInterval> | undefined;
   private running = false;
-  private stopped = false;
+  private rerunRequested = false;
 
-  constructor(private readonly processing: EventProcessingService) {}
+  constructor(
+    private readonly eventProcessingService: EventProcessingService,
+  ) {}
 
   onModuleInit(): void {
-    if (process.env.EVENT_ENGINE_WORKER_DISABLED === 'true') {
+    if (process.env.EVENT_WORKER_ENABLED === 'false') {
+      this.verboseLog('worker disabled', {});
       return;
     }
 
-    this.timer = setInterval(() => this.runOnce(), this.intervalMs);
-    this.timer.unref?.();
-    this.requestRun();
+    const intervalMs = Number(process.env.EVENT_WORKER_INTERVAL_MS ?? 1000);
+    this.timer = setInterval(() => this.nudge(), intervalMs);
+    this.verboseLog('worker started', { intervalMs });
+    this.nudge();
   }
 
   onModuleDestroy(): void {
-    this.stopped = true;
     if (this.timer) {
       clearInterval(this.timer);
-      this.timer = null;
     }
   }
 
-  requestRun(): void {
-    if (this.stopped || process.env.EVENT_ENGINE_WORKER_DISABLED === 'true') {
-      return;
-    }
-
-    setImmediate(() => this.runOnce());
+  nudge(): void {
+    setTimeout(() => this.runAvailableWork(), 0);
   }
 
-  runOnce(): void {
-    if (this.running || this.stopped) {
+  private runAvailableWork(): void {
+    if (this.running) {
+      this.rerunRequested = true;
+      this.verboseLog('worker rerun requested while busy', {});
       return;
     }
 
     this.running = true;
+
     try {
-      this.processing.processAvailable();
-    } catch (error) {
-      this.logger.error(
-        'Background event worker failed',
-        error instanceof Error ? error.stack : String(error),
-      );
+      let processedJobs = 0;
+      let outcome = this.eventProcessingService.processNextAvailableJob();
+
+      while (outcome && processedJobs < 500) {
+        processedJobs += 1;
+        outcome = this.eventProcessingService.processNextAvailableJob();
+      }
+
+      if (processedJobs > 0) {
+        this.verboseLog('worker pass completed', { processedJobs });
+      }
     } finally {
       this.running = false;
+
+      if (this.rerunRequested) {
+        this.rerunRequested = false;
+        this.nudge();
+      }
     }
   }
-}
 
-function readPositiveNumber(
-  value: string | undefined,
-  fallback: number,
-): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  private verboseLog(message: string, details: Record<string, unknown>): void {
+    if (!this.verboseLogs) {
+      return;
+    }
+
+    this.logger.log(`${message} ${JSON.stringify(details)}`);
+  }
 }

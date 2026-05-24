@@ -1,1219 +1,1402 @@
-import { Injectable } from '@nestjs/common';
-import {
-  extractPayloadStatus,
-  isOrderStatus,
-  optionalString,
-  validateIncomingEvent,
-} from '../domain/event-utils';
-import { hasMoneyValue, toMinorUnits } from '../domain/money';
-import { StateMachineService } from '../domain/state-machine.service';
-import {
-  DeadLetterEventRecord,
-  Decision,
-  EventDecisionRecord,
-  EventEngineDatabase,
-  EventType,
-  FieldMergeDecision,
-  IncomingEvent,
-  OrderRecord,
-  OrderStatus,
-  RawIncomingEventRecord,
-  ReasonCode,
-} from '../domain/types';
-import { JsonDatabaseService } from '../persistence/json-database.service';
 
-interface ProcessOneResult {
-  final: boolean;
-  stateChanged: boolean;
-  decision?: EventDecisionRecord;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import { Injectable, Logger } from '@nestjs/common';
+import type { DatabaseSync as DatabaseSyncInstance } from 'node:sqlite';
+import { SqliteService } from '../database/sqlite.service';
+import {
+  EngineDecision,
+  OrderRow,
+  OrderStatus,
+  orderStatuses,
+  ProcessJobOutcome,
+  ProcessingJobRow,
+  ReasonCode,
+  supportedEventTypes,
+  SupportedEventType,
+  ValidOrderEvent,
+} from './event.types';
+
+interface DecisionInput {
+  job: ProcessingJobRow;
+  event: Partial<ValidOrderEvent>;
+  decision: EngineDecision;
+  reasonCode: ReasonCode;
+  reasonMessage: string;
+  details?: Record<string, unknown>;
+  processingTimeMs: number;
 }
 
-interface AppliedChangeSet {
-  changedFields: Record<string, unknown>;
-  skippedFields: Record<string, string>;
-  fromStatus: OrderStatus | null;
-  toStatus: OrderStatus | null;
+interface DecisionResult {
+  decisionId: number;
+}
+
+interface FieldChangeSet {
+  changed: Record<string, unknown>;
+  skipped: Record<string, unknown>;
 }
 
 @Injectable()
 export class EventProcessingService {
-  private readonly maxTechnicalAttempts = 3;
-  private readonly retryDelayMs = 500;
+  private readonly logger = new Logger(EventProcessingService.name);
+  private readonly db: DatabaseSyncInstance;
+  private readonly verboseLogs =
+    process.env.EVENT_WORKER_VERBOSE_LOGS === 'true' ||
+    process.env.EVENT_WORKER_VERBOSE_LOGS === '1';
+  private readonly maxAttempts = 3;
+  private readonly retryDelayMs = 3_000;
+  private readonly deferredRetryMs = 60_000;
+  private readonly lockTimeoutMs = Number(
+    process.env.EVENT_WORKER_LOCK_TIMEOUT_MS ?? 30_000,
+  );
+  private readonly workerId = [
+    'worker',
+    process.pid,
+    Date.now(),
+    Math.random().toString(36).slice(2),
+  ].join('-');
 
-  constructor(
-    private readonly database: JsonDatabaseService,
-    private readonly stateMachine: StateMachineService,
-  ) {}
+  constructor(private readonly sqliteService: SqliteService) {
+    this.db = sqliteService.connection;
+  }
 
-  processAvailable(): void {
-    this.database.runInTransaction((database) => {
-      let shouldRunAnotherPass = true;
-      let passes = 0;
+  processNextAvailableJob(): ProcessJobOutcome | null {
+    const job = this.claimNextAvailableJob();
 
-      while (
-        shouldRunAnotherPass &&
-        passes < database.rawIncomingEvents.length + 2
-      ) {
-        shouldRunAnotherPass = false;
-        passes += 1;
+    if (!job) {
+      return null;
+    }
 
-        const now = Date.now();
-        const candidates = database.rawIncomingEvents
-          .filter((raw) => this.isAvailableForProcessing(raw, now))
-          .sort((left, right) => left.id - right.id);
+    try {
+      return this.sqliteService.transaction(() => this.processBusinessJob(job));
+    } catch (error) {
+      this.recordTechnicalFailure(job, error);
+      return { orderChanged: false };
+    }
+  }
 
-        for (const raw of candidates) {
-          const result = this.processOneSafely(database, raw);
-          shouldRunAnotherPass = shouldRunAnotherPass || result.stateChanged;
-        }
+  private claimNextAvailableJob(): ProcessingJobRow | null {
+    return this.sqliteService.transaction(() => {
+      const now = new Date();
+      const nowIso = now.toISOString();
+      const staleBeforeIso = new Date(
+        now.getTime() - this.lockTimeoutMs,
+      ).toISOString();
+      const claimed = this.db
+        .prepare(
+          `
+            UPDATE event_processing_jobs
+            SET
+              locked_by = ?,
+              locked_at = ?,
+              updated_at = ?
+            WHERE id = (
+              SELECT jobs.id
+              FROM event_processing_jobs jobs
+              JOIN raw_incoming_events raw ON raw.id = jobs.raw_incoming_event_id
+              WHERE jobs.status IN ('PENDING', 'DEFERRED')
+                AND jobs.available_at <= ?
+                AND (
+                  jobs.locked_by IS NULL
+                  OR jobs.locked_at IS NULL
+                  OR jobs.locked_at <= ?
+                )
+              ORDER BY raw.id ASC
+              LIMIT 1
+            )
+            RETURNING id
+          `,
+        )
+        .get(this.workerId, nowIso, nowIso, nowIso, staleBeforeIso) as
+        | { id: number }
+        | undefined;
+
+      if (!claimed) {
+        return null;
       }
+
+      const job = this.db
+        .prepare(
+          `
+            SELECT
+              jobs.id AS job_id,
+              jobs.raw_incoming_event_id,
+              jobs.status,
+              jobs.attempts,
+              jobs.locked_by,
+              jobs.locked_at,
+              raw.raw_event_json,
+              raw.event_id,
+              raw.order_id,
+              raw.type,
+              raw.event_timestamp
+            FROM event_processing_jobs jobs
+            JOIN raw_incoming_events raw ON raw.id = jobs.raw_incoming_event_id
+            WHERE jobs.id = ?
+          `,
+        )
+        .get(claimed.id) as unknown as ProcessingJobRow;
+
+      this.verboseLog('claimed job', {
+        jobId: job.job_id,
+        rawIncomingEventId: job.raw_incoming_event_id,
+        eventId: job.event_id,
+        orderId: job.order_id,
+        type: job.type,
+        status: job.status,
+        workerId: this.workerId,
+      });
+
+      return job;
     });
   }
 
-  getResultsForRawIds(rawIds: number[]) {
-    return this.database.read((database) =>
-      rawIds.map((rawId) => {
-        const raw = database.rawIncomingEvents.find(
-          (item) => item.id === rawId,
-        );
-        const decision =
-          raw?.lastDecisionId === null
-            ? null
-            : (database.eventDecisions.find(
-                (item) => item.id === raw?.lastDecisionId,
-              ) ?? null);
-
-        return {
-          incomingEventId: rawId,
-          eventId: raw?.eventId ?? null,
-          orderId: raw?.orderId ?? null,
-          type: raw?.type ?? null,
-          status: decision?.decision ?? raw?.processingStatus ?? 'PENDING',
-          reasonCode: decision?.reasonCode ?? null,
-          reasonMessage: decision?.reasonMessage ?? 'Event is waiting',
-          processingTimeMs: decision?.processingTimeMs ?? 0,
-        };
-      }),
-    );
-  }
-
-  private isAvailableForProcessing(
-    raw: RawIncomingEventRecord,
-    now: number,
-  ): boolean {
-    if (
-      raw.processingStatus === 'DONE' ||
-      raw.processingStatus === 'DEAD_LETTERED'
-    ) {
-      return false;
-    }
-
-    return new Date(raw.availableAt).getTime() <= now;
-  }
-
-  private processOneSafely(
-    database: EventEngineDatabase,
-    raw: RawIncomingEventRecord,
-  ): ProcessOneResult {
-    try {
-      raw.lastErrorMessage = null;
-      return this.processOne(database, raw);
-    } catch (error) {
-      return this.handleTechnicalFailure(database, raw, error);
-    }
-  }
-
-  private processOne(
-    database: EventEngineDatabase,
-    raw: RawIncomingEventRecord,
-  ): ProcessOneResult {
+  private processBusinessJob(job: ProcessingJobRow): ProcessJobOutcome {
     const startedAt = Date.now();
-    const validation = validateIncomingEvent(raw.rawEvent);
+    const validation = this.validateRawEvent(job);
 
-    if (!validation.ok || !validation.event) {
-      return this.finish(
-        database,
-        raw,
-        'REJECTED',
-        raw.type && !this.isSupportedType(raw.type)
-          ? 'UNKNOWN_EVENT_TYPE'
-          : 'INVALID_SCHEMA',
-        validation.reasonMessage ?? 'Invalid event schema',
-        {},
-        startedAt,
-        true,
-        false,
-      );
+    if (!validation.valid) {
+      this.finishWithDecision({
+        job,
+        event: this.partialEventFromJob(job),
+        decision: 'REJECTED',
+        reasonCode: validation.reason
+        Code,
+        reasonMessage: validation.reasonMessage,
+        details: validation.details,
+        processingTimeMs: Date.now() - startedAt,
+      });
+      return { orderChanged: false };
     }
 
     const event = validation.event;
-    const existingKey = database.processedEventKeys.find(
-      (key) => key.eventId === event.eventId,
-    );
 
-    if (existingKey && existingKey.firstRawIncomingEventId !== raw.id) {
-      return this.finish(
-        database,
-        raw,
-        'DUPLICATE',
-        'DUPLICATE_EVENT',
-        'Event was already processed or is waiting for processing',
-        { firstRawIncomingEventId: existingKey.firstRawIncomingEventId },
-        startedAt,
-        true,
-        false,
+    if (!this.claimDeduplicationKey(job, event)) {
+      this.finishWithDecision({
+        job,
         event,
-      );
-    }
-
-    if (!existingKey) {
-      database.processedEventKeys.push({
-        eventId: event.eventId,
-        firstRawIncomingEventId: raw.id,
-        orderId: event.orderId,
-        firstSeenAt: new Date().toISOString(),
+        decision: 'DUPLICATE',
+        reasonCode: 'DUPLICATE_EVENT',
+        reasonMessage: `Event ${event.eventId} was already processed or claimed`,
+        processingTimeMs: Date.now() - startedAt,
       });
+      return { orderChanged: false };
     }
 
-    const order = this.findOrder(database, event.orderId);
+    const order = this.findOrder(event.orderId);
+
     if (!order && event.type !== 'ORDER_CREATED') {
-      return this.deferUntilOrderExists(database, raw, event, startedAt);
+      this.deferJob(job, event, Date.now() - startedAt);
+      return { orderChanged: false };
     }
 
     switch (event.type) {
       case 'ORDER_CREATED':
-        return this.applyOrderCreated(database, raw, event, startedAt);
+        return this.processOrderCreated(job, event, order, startedAt);
       case 'ORDER_UPDATED':
-        return this.applyOrderUpdated(database, raw, event, order!, startedAt);
+        return this.processOrderUpdated(job, event, order!, startedAt);
       case 'PAYMENT_CAPTURED':
-        return this.applyPaymentCaptured(
-          database,
-          raw,
-          event,
-          order!,
-          startedAt,
-        );
+        return this.processPaymentCaptured(job, event, order!, startedAt);
       case 'ORDER_CANCELLED':
-        return this.applyOrderCancelled(
-          database,
-          raw,
-          event,
-          order!,
-          startedAt,
-        );
+        return this.processOrderCancelled(job, event, order!, startedAt);
       case 'REFUND_ISSUED':
-        return this.applyRefundIssued(database, raw, event, order!, startedAt);
-      default: {
-        const unsupportedType = (event as { type: string }).type;
-        return this.finish(
-          database,
-          raw,
-          'REJECTED',
-          'UNKNOWN_EVENT_TYPE',
-          `Unsupported event type: ${unsupportedType}`,
-          {},
-          startedAt,
-          true,
-          false,
-          event,
-        );
-      }
+        return this.processRefundIssued(job, event, order!, startedAt);
     }
   }
 
-  private applyOrderCreated(
-    database: EventEngineDatabase,
-    raw: RawIncomingEventRecord,
-    event: IncomingEvent,
+  private processOrderCreated(
+    job: ProcessingJobRow,
+    event: ValidOrderEvent,
+    existingOrder: OrderRow | null,
     startedAt: number,
-  ): ProcessOneResult {
-    if (this.findOrder(database, event.orderId)) {
-      return this.finish(
-        database,
-        raw,
-        'REJECTED',
-        'ORDER_ALREADY_EXISTS',
-        'Order already exists',
-        {},
-        startedAt,
-        true,
-        false,
+  ): ProcessJobOutcome {
+    if (existingOrder) {
+      this.finishWithDecision({
+        job,
         event,
-      );
+        decision: 'REJECTED',
+        reasonCode: 'ORDER_ALREADY_EXISTS',
+        reasonMessage: `Order ${event.orderId} already exists`,
+        processingTimeMs: Date.now() - startedAt,
+      });
+      return { orderChanged: false };
     }
 
-    const requestedStatus = extractPayloadStatus(event.payload);
-    if (
-      event.payload.status !== undefined &&
-      (!requestedStatus || requestedStatus !== 'CREATED')
-    ) {
-      return this.finish(
-        database,
-        raw,
-        'REJECTED',
-        'FORBIDDEN_TRANSITION',
-        'ORDER_CREATED can only create an order in CREATED status',
-        { requestedStatus: event.payload.status },
-        startedAt,
-        true,
-        false,
-        event,
-      );
-    }
-
-    const amountMinorResult = this.readOptionalMoney(event.payload.amount);
-    if (!amountMinorResult.valid) {
-      return this.invalidMoney(database, raw, event, startedAt, 'amount');
-    }
-
-    const currencyResult = this.readOptionalCurrency(event.payload.currency);
-    if (!currencyResult.valid) {
-      return this.invalidCurrency(database, raw, event, startedAt);
-    }
-
+    const amountMinor = this.optionalMoneyToMinor(event.payload.amount);
+    const currency = this.optionalCurrency(event.payload.currency);
     const now = new Date().toISOString();
-    const order: OrderRecord = {
-      orderId: event.orderId,
-      status: 'CREATED',
-      amountMinor: amountMinorResult.value,
-      currency: currencyResult.value,
-      paidAmountMinor: 0,
-      refundedAmountMinor: 0,
-      version: 1,
-      maxAcceptedEventTimestamp: event.timestamp,
-      lastAcceptedEventId: event.eventId,
-      createdAt: now,
-      updatedAt: now,
-    };
 
-    database.orders.push(order);
-    this.rememberFieldVersion(database, event, 'status');
-    if (amountMinorResult.value !== null) {
-      this.rememberFieldVersion(database, event, 'amountMinor');
-    }
-    if (currencyResult.value !== null) {
-      this.rememberFieldVersion(database, event, 'currency');
-    }
-
-    const changedFields: Record<string, unknown> = {
-      status: 'CREATED',
-      paidAmountMinor: 0,
-      refundedAmountMinor: 0,
-    };
-    if (amountMinorResult.value !== null) {
-      changedFields.amountMinor = amountMinorResult.value;
-    }
-    if (currencyResult.value !== null) {
-      changedFields.currency = currencyResult.value;
-    }
-
-    this.appendHistory(
-      database,
-      order,
-      event,
-      {
-        changedFields,
-        skippedFields: {},
-        fromStatus: null,
-        toStatus: 'CREATED',
-      },
-      'ACCEPTED',
-      'APPLIED',
-    );
-
-    return this.finish(
-      database,
-      raw,
-      'ACCEPTED',
-      'APPLIED',
-      'Order created',
-      { changedFields },
-      startedAt,
-      true,
-      true,
-      event,
-    );
-  }
-
-  private applyOrderUpdated(
-    database: EventEngineDatabase,
-    raw: RawIncomingEventRecord,
-    event: IncomingEvent,
-    order: OrderRecord,
-    startedAt: number,
-  ): ProcessOneResult {
-    const changes: AppliedChangeSet = {
-      changedFields: {},
-      skippedFields: {},
-      fromStatus: null,
-      toStatus: null,
-    };
-
-    if (hasMoneyValue(event.payload.amount)) {
-      const amountMinor = toMinorUnits(event.payload.amount);
-      if (amountMinor === null) {
-        return this.invalidMoney(database, raw, event, startedAt, 'amount');
-      }
-      this.applySetField(
-        database,
-        order,
-        event,
-        'amountMinor',
+    this.db
+      .prepare(
+        `
+          INSERT INTO orders (
+            order_id,
+            status,
+            amount_minor,
+            currency,
+            paid_amount_minor,
+            refunded_amount_minor,
+            version,
+            max_accepted_event_timestamp,
+            last_accepted_event_id,
+            created_at,
+            updated_at
+          )
+          VALUES (?, 'CREATED', ?, ?, 0, 0, 1, ?, ?, ?, ?)
+        `,
+      )
+      .run(
+        event.orderId,
         amountMinor,
-        changes,
-      );
-    }
-
-    if (event.payload.currency !== undefined) {
-      const currencyResult = this.readOptionalCurrency(event.payload.currency);
-      if (!currencyResult.valid || currencyResult.value === null) {
-        return this.invalidCurrency(database, raw, event, startedAt);
-      }
-      this.applySetField(
-        database,
-        order,
-        event,
-        'currency',
-        currencyResult.value,
-        changes,
-      );
-    }
-
-    if (event.payload.status !== undefined) {
-      const requestedStatus = optionalString(event.payload.status);
-      if (!requestedStatus || !isOrderStatus(requestedStatus)) {
-        return this.finish(
-          database,
-          raw,
-          'REJECTED',
-          'INVALID_SCHEMA',
-          'payload.status must be a supported order status',
-          { status: event.payload.status },
-          startedAt,
-          true,
-          false,
-          event,
-        );
-      }
-
-      const statusResult = this.applyRequestedStatus(
-        database,
-        order,
-        event,
-        requestedStatus,
-        changes,
+        currency,
+        event.timestamp,
+        event.eventId,
+        now,
+        now,
       );
 
-      if (!statusResult.ok) {
-        return this.finish(
-          database,
-          raw,
-          'REJECTED',
-          statusResult.reasonCode,
-          statusResult.reasonMessage,
-          statusResult.details,
-          startedAt,
-          true,
-          false,
-          event,
-        );
-      }
+    this.upsertFieldVersion(event.orderId, 'status', event);
+
+    if (amountMinor !== null) {
+      this.upsertFieldVersion(event.orderId, 'amountMinor', event);
     }
 
-    return this.finishAppliedChanges(
-      database,
-      raw,
-      event,
-      order,
-      changes,
-      startedAt,
-      'Order updated',
-    );
-  }
-
-  private applyPaymentCaptured(
-    database: EventEngineDatabase,
-    raw: RawIncomingEventRecord,
-    event: IncomingEvent,
-    order: OrderRecord,
-    startedAt: number,
-  ): ProcessOneResult {
-    const amountMinor = hasMoneyValue(event.payload.amount)
-      ? toMinorUnits(event.payload.amount)
-      : order.amountMinor;
-
-    if (amountMinor === null || amountMinor <= 0) {
-      return this.finish(
-        database,
-        raw,
-        'REJECTED',
-        'PAYMENT_AMOUNT_REQUIRED',
-        'PAYMENT_CAPTURED requires a positive amount or an existing order amount',
-        { amount: event.payload.amount },
-        startedAt,
-        true,
-        false,
-        event,
-      );
+    if (currency !== null) {
+      this.upsertFieldVersion(event.orderId, 'currency', event);
     }
 
-    if (order.paidAmountMinor > 0) {
-      return this.finish(
-        database,
-        raw,
-        'REJECTED',
-        'PAYMENT_ALREADY_CAPTURED',
-        'Payment was already captured for this order',
-        { paidAmountMinor: order.paidAmountMinor },
-        startedAt,
-        true,
-        false,
-        event,
-      );
-    }
-
-    const transition = this.stateMachine.canTransition(order.status, 'PAID');
-    if (!transition.allowed) {
-      return this.forbiddenTransition(
-        database,
-        raw,
-        event,
-        startedAt,
-        transition.reason,
-      );
-    }
-
-    const merge = this.shouldApplySetField(database, event, 'status');
-    if (!merge.apply) {
-      return this.finish(
-        database,
-        raw,
-        'REJECTED',
-        'OBSOLETE_EVENT',
-        merge.reason ?? 'Status transition is obsolete',
-        { field: 'status' },
-        startedAt,
-        true,
-        false,
-        event,
-      );
-    }
-
-    const changes: AppliedChangeSet = {
-      changedFields: { paidAmountMinor: amountMinor },
-      skippedFields: {},
-      fromStatus: order.status,
-      toStatus: 'PAID',
+    const changed = {
+      status: 'CREATED',
+      ...(amountMinor === null ? {} : { amountMinor }),
+      ...(currency === null ? {} : { currency }),
     };
 
-    order.status = 'PAID';
-    order.paidAmountMinor = amountMinor;
-    this.rememberFieldVersion(database, event, 'status');
-    this.rememberFieldVersion(database, event, 'paidAmountMinor');
+    this.writeHistory(
+      event,
+      null,
+      'CREATED',
+      changed,
+      {},
+      'ACCEPTED',
+      'APPLIED',
+    );
+    this.finishWithDecision({
+      job,
+      event,
+      decision: 'ACCEPTED',
+      reasonCode: 'APPLIED',
+      reasonMessage: `Order ${event.orderId} was created`,
+      details: { changedFields: changed },
+      processingTimeMs: Date.now() - startedAt,
+    });
+    this.releaseDeferredJobsForOrder(event.orderId);
+    return { orderChanged: true };
+  }
 
-    return this.finishAppliedChanges(
-      database,
-      raw,
+  private processOrderUpdated(
+    job: ProcessingJobRow,
+    event: ValidOrderEvent,
+    order: OrderRow,
+    startedAt: number,
+  ): ProcessJobOutcome {
+    const fields: FieldChangeSet = { changed: {}, skipped: {} };
+    let nextAmountMinor = order.amount_minor;
+    let nextCurrency = order.currency;
+    let nextStatus = order.status;
+
+    if (Object.prototype.hasOwnProperty.call(event.payload, 'amount')) {
+      const amountMinor = this.optionalMoneyToMinor(event.payload.amount);
+      if (this.canApplyField(event.orderId, 'amountMinor', event)) {
+        nextAmountMinor = amountMinor;
+        fields.changed.amountMinor = amountMinor;
+      } else {
+        fields.skipped.amountMinor = 'OBSOLETE_FIELD';
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(event.payload, 'currency')) {
+      const currency = this.optionalCurrency(event.payload.currency);
+      if (this.canApplyField(event.orderId, 'currency', event)) {
+        nextCurrency = currency;
+        fields.changed.currency = currency;
+      } else {
+        fields.skipped.currency = 'OBSOLETE_FIELD';
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(event.payload, 'status')) {
+      const requestedStatus = this.readOrderStatus(event.payload.status);
+      if (!this.canApplyField(event.orderId, 'status', event)) {
+        fields.skipped.status = 'OBSOLETE_FIELD';
+      } else if (!this.canTransition(order.status, requestedStatus)) {
+        fields.skipped.status = 'FORBIDDEN_TRANSITION';
+      } else {
+        nextStatus = requestedStatus;
+        fields.changed.status = requestedStatus;
+      }
+    }
+
+    return this.finishStateMutation(
+      job,
       event,
       order,
-      changes,
+      {
+        status: nextStatus,
+        amountMinor: nextAmountMinor,
+        currency: nextCurrency,
+        paidAmountMinor: order.paid_amount_minor,
+        refundedAmountMinor: order.refunded_amount_minor,
+      },
+      fields,
       startedAt,
-      'Payment captured',
     );
   }
 
-  private applyOrderCancelled(
-    database: EventEngineDatabase,
-    raw: RawIncomingEventRecord,
-    event: IncomingEvent,
-    order: OrderRecord,
+  private processPaymentCaptured(
+    job: ProcessingJobRow,
+    event: ValidOrderEvent,
+    order: OrderRow,
     startedAt: number,
-  ): ProcessOneResult {
-    const transition = this.stateMachine.canTransition(
-      order.status,
-      'CANCELLED',
-    );
-    if (!transition.allowed) {
-      return this.forbiddenTransition(
-        database,
-        raw,
+  ): ProcessJobOutcome {
+    const paymentAmount =
+      Object.prototype.hasOwnProperty.call(event.payload, 'amount') ||
+      order.amount_minor === null
+        ? this.positiveMoneyToMinor(event.payload.amount)
+        : order.amount_minor;
+
+    if (paymentAmount === null || paymentAmount <= 0) {
+      this.finishWithDecision({
+        job,
         event,
-        startedAt,
-        transition.reason,
-      );
+        decision: 'REJECTED',
+        reasonCode: 'PAYMENT_AMOUNT_REQUIRED',
+        reasonMessage: 'A positive payment amount is required',
+        processingTimeMs: Date.now() - startedAt,
+      });
+      return { orderChanged: false };
     }
 
-    const merge = this.shouldApplySetField(database, event, 'status');
-    if (!merge.apply) {
-      return this.finish(
-        database,
-        raw,
-        'REJECTED',
-        'OBSOLETE_EVENT',
-        merge.reason ?? 'Cancellation is obsolete',
-        { field: 'status' },
-        startedAt,
-        true,
-        false,
+    if (order.paid_amount_minor > 0) {
+      this.finishWithDecision({
+        job,
         event,
-      );
+        decision: 'REJECTED',
+        reasonCode: 'PAYMENT_ALREADY_CAPTURED',
+        reasonMessage: `Order ${event.orderId} already has a captured payment`,
+        processingTimeMs: Date.now() - startedAt,
+      });
+      return { orderChanged: false };
     }
 
-    const changes: AppliedChangeSet = {
-      changedFields: {},
-      skippedFields: {},
-      fromStatus: order.status,
-      toStatus: 'CANCELLED',
-    };
+    if (!this.canTransition(order.status, 'PAID')) {
+      this.finishWithDecision({
+        job,
+        event,
+        decision: 'REJECTED',
+        reasonCode: 'FORBIDDEN_TRANSITION',
+        reasonMessage: `Cannot move order ${event.orderId} from ${order.status} to PAID`,
+        processingTimeMs: Date.now() - startedAt,
+      });
+      return { orderChanged: false };
+    }
 
-    order.status = 'CANCELLED';
-    this.rememberFieldVersion(database, event, 'status');
-
-    return this.finishAppliedChanges(
-      database,
-      raw,
+    return this.finishStateMutation(
+      job,
       event,
       order,
-      changes,
+      {
+        status: 'PAID',
+        amountMinor: order.amount_minor,
+        currency: order.currency,
+        paidAmountMinor: paymentAmount,
+        refundedAmountMinor: order.refunded_amount_minor,
+      },
+      {
+        changed: { status: 'PAID', paidAmountMinor: paymentAmount },
+        skipped: {},
+      },
       startedAt,
-      'Order cancelled',
     );
   }
 
-  private applyRefundIssued(
-    database: EventEngineDatabase,
-    raw: RawIncomingEventRecord,
-    event: IncomingEvent,
-    order: OrderRecord,
+  private processOrderCancelled(
+    job: ProcessingJobRow,
+    event: ValidOrderEvent,
+    order: OrderRow,
     startedAt: number,
-  ): ProcessOneResult {
-    const refundAmountValue =
-      event.payload.refundAmount ?? event.payload.amount;
-    const refundAmountMinor = toMinorUnits(refundAmountValue);
-
-    if (refundAmountMinor === null || refundAmountMinor <= 0) {
-      return this.finish(
-        database,
-        raw,
-        'REJECTED',
-        'REFUND_AMOUNT_REQUIRED',
-        'REFUND_ISSUED requires a positive amount',
-        { amount: refundAmountValue },
-        startedAt,
-        true,
-        false,
+  ): ProcessJobOutcome {
+    if (!this.canTransition(order.status, 'CANCELLED')) {
+      this.finishWithDecision({
+        job,
         event,
-      );
+        decision: 'REJECTED',
+        reasonCode: 'FORBIDDEN_TRANSITION',
+        reasonMessage: `Cannot move order ${event.orderId} from ${order.status} to CANCELLED`,
+        processingTimeMs: Date.now() - startedAt,
+      });
+      return { orderChanged: false };
     }
 
-    if (!['PAID', 'PARTIALLY_REFUNDED'].includes(order.status)) {
-      return this.forbiddenTransition(
-        database,
-        raw,
+    return this.finishStateMutation(
+      job,
+      event,
+      order,
+      {
+        status: 'CANCELLED',
+        amountMinor: order.amount_minor,
+        currency: order.currency,
+        paidAmountMinor: order.paid_amount_minor,
+        refundedAmountMinor: order.refunded_amount_minor,
+      },
+      {
+        changed: { status: 'CANCELLED' },
+        skipped: {},
+      },
+      startedAt,
+    );
+  }
+
+  private processRefundIssued(
+    job: ProcessingJobRow,
+    event: ValidOrderEvent,
+    order: OrderRow,
+    startedAt: number,
+  ): ProcessJobOutcome {
+    const amountValue = Object.prototype.hasOwnProperty.call(
+      event.payload,
+      'refundAmount',
+    )
+      ? event.payload.refundAmount
+      : event.payload.amount;
+    const refundAmount = this.positiveMoneyToMinor(amountValue);
+
+    if (refundAmount === null || refundAmount <= 0) {
+      this.finishWithDecision({
+        job,
         event,
-        startedAt,
-        `Refund cannot be issued for order in ${order.status} status`,
-      );
+        decision: 'REJECTED',
+        reasonCode: 'REFUND_AMOUNT_REQUIRED',
+        reasonMessage: 'A positive refund amount is required',
+        processingTimeMs: Date.now() - startedAt,
+      });
+      return { orderChanged: false };
     }
 
-    const nextRefundedAmount = order.refundedAmountMinor + refundAmountMinor;
     if (
-      order.paidAmountMinor <= 0 ||
-      nextRefundedAmount > order.paidAmountMinor
+      order.status === 'CREATED' &&
+      this.hasPendingPaymentForOrder(event.orderId, event.timestamp)
     ) {
-      return this.finish(
-        database,
-        raw,
-        'REJECTED',
-        'REFUND_EXCEEDS_CAPTURED',
-        'Refund amount cannot exceed captured payment amount',
-        {
-          paidAmountMinor: order.paidAmountMinor,
-          currentRefundedAmountMinor: order.refundedAmountMinor,
-          requestedRefundAmountMinor: refundAmountMinor,
-        },
-        startedAt,
-        true,
-        false,
+      this.deferJob(job, event, Date.now() - startedAt);
+      return { orderChanged: false };
+    }
+
+    if (order.status !== 'PAID' && order.status !== 'PARTIALLY_REFUNDED') {
+      this.finishWithDecision({
+        job,
         event,
-      );
+        decision: 'REJECTED',
+        reasonCode: 'FORBIDDEN_TRANSITION',
+        reasonMessage: `Cannot refund order ${event.orderId} from ${order.status}`,
+        processingTimeMs: Date.now() - startedAt,
+      });
+      return { orderChanged: false };
+    }
+
+    const nextRefundedAmount = order.refunded_amount_minor + refundAmount;
+
+    if (nextRefundedAmount > order.paid_amount_minor) {
+      this.finishWithDecision({
+        job,
+        event,
+        decision: 'REJECTED',
+        reasonCode: 'REFUND_EXCEEDS_CAPTURED',
+        reasonMessage: `Refund would exceed captured payment for order ${event.orderId}`,
+        processingTimeMs: Date.now() - startedAt,
+      });
+      return { orderChanged: false };
     }
 
     const nextStatus: OrderStatus =
-      nextRefundedAmount === order.paidAmountMinor
+      nextRefundedAmount === order.paid_amount_minor
         ? 'REFUNDED'
         : 'PARTIALLY_REFUNDED';
 
-    const transition = this.stateMachine.canTransition(
-      order.status,
-      nextStatus,
-    );
-    if (!transition.allowed) {
-      return this.forbiddenTransition(
-        database,
-        raw,
-        event,
-        startedAt,
-        transition.reason,
-      );
-    }
-
-    const changes: AppliedChangeSet = {
-      changedFields: {
-        refundedAmountMinor: nextRefundedAmount,
-      },
-      skippedFields: {},
-      fromStatus: order.status === nextStatus ? null : order.status,
-      toStatus: order.status === nextStatus ? null : nextStatus,
-    };
-
-    order.refundedAmountMinor = nextRefundedAmount;
-    order.status = nextStatus;
-    this.rememberLatestFieldEvent(database, event, 'status');
-    this.rememberLatestFieldEvent(database, event, 'refundedAmountMinor');
-
-    return this.finishAppliedChanges(
-      database,
-      raw,
+    return this.finishStateMutation(
+      job,
       event,
       order,
-      changes,
-      startedAt,
-      'Refund issued',
-    );
-  }
-
-  private applyRequestedStatus(
-    database: EventEngineDatabase,
-    order: OrderRecord,
-    event: IncomingEvent,
-    requestedStatus: OrderStatus,
-    changes: AppliedChangeSet,
-  ):
-    | { ok: true }
-    | {
-        ok: false;
-        reasonCode: ReasonCode;
-        reasonMessage: string;
-        details: Record<string, unknown>;
-      } {
-    if (requestedStatus === order.status) {
-      return { ok: true };
-    }
-
-    const merge = this.shouldApplySetField(database, event, 'status');
-    if (!merge.apply) {
-      changes.skippedFields.status = merge.reason ?? 'Status field is obsolete';
-      return { ok: true };
-    }
-
-    const transition = this.stateMachine.canTransition(
-      order.status,
-      requestedStatus,
-    );
-    if (!transition.allowed) {
-      return {
-        ok: false,
-        reasonCode: 'FORBIDDEN_TRANSITION',
-        reasonMessage: transition.reason,
-        details: { fromStatus: order.status, toStatus: requestedStatus },
-      };
-    }
-
-    if (requestedStatus === 'PAID') {
-      const paidAmountMinor = hasMoneyValue(event.payload.amount)
-        ? toMinorUnits(event.payload.amount)
-        : order.amountMinor;
-
-      if (paidAmountMinor === null || paidAmountMinor <= 0) {
-        return {
-          ok: false,
-          reasonCode: 'PAYMENT_AMOUNT_REQUIRED',
-          reasonMessage:
-            'Changing status to PAID requires a positive amount or an existing order amount',
-          details: { amount: event.payload.amount },
-        };
-      }
-      order.paidAmountMinor = paidAmountMinor;
-      changes.changedFields.paidAmountMinor = paidAmountMinor;
-      this.rememberFieldVersion(database, event, 'paidAmountMinor');
-    }
-
-    if (requestedStatus === 'REFUNDED') {
-      if (order.paidAmountMinor <= 0) {
-        return {
-          ok: false,
-          reasonCode: 'REFUND_EXCEEDS_CAPTURED',
-          reasonMessage: 'Cannot refund an order without captured payment',
-          details: { paidAmountMinor: order.paidAmountMinor },
-        };
-      }
-      order.refundedAmountMinor = order.paidAmountMinor;
-      changes.changedFields.refundedAmountMinor = order.refundedAmountMinor;
-      this.rememberFieldVersion(database, event, 'refundedAmountMinor');
-    }
-
-    if (requestedStatus === 'PARTIALLY_REFUNDED') {
-      return {
-        ok: false,
-        reasonCode: 'FORBIDDEN_TRANSITION',
-        reasonMessage:
-          'Use REFUND_ISSUED with an amount to create a partial refund',
-        details: { requestedStatus },
-      };
-    }
-
-    changes.fromStatus = order.status;
-    changes.toStatus = requestedStatus;
-    order.status = requestedStatus;
-    this.rememberFieldVersion(database, event, 'status');
-    return { ok: true };
-  }
-
-  private finishAppliedChanges(
-    database: EventEngineDatabase,
-    raw: RawIncomingEventRecord,
-    event: IncomingEvent,
-    order: OrderRecord,
-    changes: AppliedChangeSet,
-    startedAt: number,
-    successMessage: string,
-  ): ProcessOneResult {
-    const changedFieldCount =
-      Object.keys(changes.changedFields).length +
-      (changes.toStatus !== null ? 1 : 0);
-    const skippedFieldCount = Object.keys(changes.skippedFields).length;
-
-    if (changedFieldCount === 0) {
-      const reasonCode: ReasonCode =
-        skippedFieldCount > 0 ? 'OBSOLETE_EVENT' : 'NO_APPLICABLE_CHANGES';
-      return this.finish(
-        database,
-        raw,
-        'REJECTED',
-        reasonCode,
-        skippedFieldCount > 0
-          ? 'All provided fields are obsolete'
-          : 'Event did not contain any applicable changes',
-        { skippedFields: changes.skippedFields },
-        startedAt,
-        true,
-        false,
-        event,
-      );
-    }
-
-    const decision: Extract<Decision, 'ACCEPTED' | 'PARTIALLY_APPLIED'> =
-      skippedFieldCount > 0 ? 'PARTIALLY_APPLIED' : 'ACCEPTED';
-    const reasonCode: ReasonCode =
-      decision === 'PARTIALLY_APPLIED' ? 'PARTIAL_MERGE' : 'APPLIED';
-
-    this.touchOrder(order, event);
-    this.appendHistory(database, order, event, changes, decision, reasonCode);
-
-    return this.finish(
-      database,
-      raw,
-      decision,
-      reasonCode,
-      decision === 'PARTIALLY_APPLIED'
-        ? 'Event was partially applied'
-        : successMessage,
       {
-        changedFields: changes.changedFields,
-        skippedFields: changes.skippedFields,
-        fromStatus: changes.fromStatus,
-        toStatus: changes.toStatus,
+        status: nextStatus,
+        amountMinor: order.amount_minor,
+        currency: order.currency,
+        paidAmountMinor: order.paid_amount_minor,
+        refundedAmountMinor: nextRefundedAmount,
+      },
+      {
+        changed: {
+          status: nextStatus,
+          refundedAmountMinor: nextRefundedAmount,
+        },
+        skipped: {},
       },
       startedAt,
-      true,
-      true,
+    );
+  }
+
+  private finishStateMutation(
+    job: ProcessingJobRow,
+    event: ValidOrderEvent,
+    order: OrderRow,
+    nextState: {
+      status: OrderStatus;
+      amountMinor: number | null;
+      currency: string | null;
+      paidAmountMinor: number;
+      refundedAmountMinor: number;
+    },
+    fields: FieldChangeSet,
+    startedAt: number,
+  ): ProcessJobOutcome {
+    const changedKeys = Object.keys(fields.changed);
+    const skippedKeys = Object.keys(fields.skipped);
+
+    if (changedKeys.length === 0) {
+      const forbiddenTransition = Object.values(fields.skipped).includes(
+        'FORBIDDEN_TRANSITION',
+      );
+      this.finishWithDecision({
+        job,
+        event,
+        decision: 'REJECTED',
+        reasonCode: forbiddenTransition
+          ? 'FORBIDDEN_TRANSITION'
+          : 'OBSOLETE_EVENT',
+        reasonMessage: forbiddenTransition
+          ? `Event ${event.eventId} requested a forbidden transition`
+          : `Event ${event.eventId} had no applicable changes`,
+        details: { skippedFields: fields.skipped },
+        processingTimeMs: Date.now() - startedAt,
+      });
+      return { orderChanged: false };
+    }
+
+    const decision: EngineDecision =
+      skippedKeys.length > 0 ? 'PARTIALLY_APPLIED' : 'ACCEPTED';
+    const reasonCode: ReasonCode =
+      decision === 'PARTIALLY_APPLIED' ? 'PARTIAL_MERGE' : 'APPLIED';
+    const now = new Date().toISOString();
+
+    this.db
+      .prepare(
+        `
+          UPDATE orders
+          SET
+            status = ?,
+            amount_minor = ?,
+            currency = ?,
+            paid_amount_minor = ?,
+            refunded_amount_minor = ?,
+            version = version + 1,
+            max_accepted_event_timestamp = MAX(max_accepted_event_timestamp, ?),
+            last_accepted_event_id = ?,
+            updated_at = ?
+          WHERE order_id = ?
+        `,
+      )
+      .run(
+        nextState.status,
+        nextState.amountMinor,
+        nextState.currency,
+        nextState.paidAmountMinor,
+        nextState.refundedAmountMinor,
+        event.timestamp,
+        event.eventId,
+        now,
+        event.orderId,
+      );
+
+    for (const fieldName of changedKeys) {
+      this.upsertFieldVersion(event.orderId, fieldName, event);
+    }
+
+    this.writeHistory(
       event,
+      order.status,
+      nextState.status,
+      fields.changed,
+      fields.skipped,
+      decision,
+      reasonCode,
     );
+    this.finishWithDecision({
+      job,
+      event,
+      decision,
+      reasonCode,
+      reasonMessage:
+        decision === 'PARTIALLY_APPLIED'
+          ? `Event ${event.eventId} was partially applied`
+          : `Event ${event.eventId} was applied`,
+      details: {
+        changedFields: fields.changed,
+        skippedFields: fields.skipped,
+      },
+      processingTimeMs: Date.now() - startedAt,
+    });
+    this.releaseDeferredJobsForOrder(event.orderId);
+    return { orderChanged: true };
   }
 
-  private applySetField(
-    database: EventEngineDatabase,
-    order: OrderRecord,
-    event: IncomingEvent,
-    fieldName: 'amountMinor' | 'currency',
-    value: number | string,
-    changes: AppliedChangeSet,
+  private finishWithDecision(input: DecisionInput): DecisionResult {
+    const decision = this.writeDecision(input);
+    const final = input.decision !== 'DEFERRED';
+
+    if (final) {
+      this.updateFinalStats(input.decision, input.processingTimeMs);
+    }
+
+    this.db
+      .prepare(
+        `
+          UPDATE event_processing_jobs
+          SET
+            status = ?,
+            last_decision_id = ?,
+            last_reason_code = ?,
+            locked_by = NULL,
+            locked_at = NULL,
+            updated_at = ?
+          WHERE id = ?
+            AND locked_by = ?
+        `,
+      )
+      .run(
+        final ? 'DONE' : 'DEFERRED',
+        decision.decisionId,
+        input.reasonCode,
+        new Date().toISOString(),
+        input.job.job_id,
+        this.workerId,
+      );
+
+    return decision;
+  }
+
+  private deferJob(
+    job: ProcessingJobRow,
+    event: ValidOrderEvent,
+    processingTimeMs: number,
   ): void {
-    const merge = this.shouldApplySetField(database, event, fieldName);
-    if (!merge.apply) {
-      changes.skippedFields[fieldName] =
-        merge.reason ?? `${fieldName} is obsolete`;
-      return;
-    }
+    const decision = this.writeDecision({
+      job,
+      event,
+      decision: 'DEFERRED',
+      reasonCode: 'ORDER_NOT_READY',
+      reasonMessage: `Order ${event.orderId} does not exist yet`,
+      processingTimeMs,
+    });
+    const now = new Date();
+    const availableAt = new Date(
+      now.getTime() + this.deferredRetryMs,
+    ).toISOString();
 
-    if (order[fieldName] !== value) {
-      order[fieldName] = value as never;
-      changes.changedFields[fieldName] = value;
-    }
-    this.rememberFieldVersion(database, event, fieldName);
+    this.db
+      .prepare(
+        `
+          UPDATE event_processing_jobs
+          SET
+            status = 'DEFERRED',
+            available_at = ?,
+            last_decision_id = ?,
+            last_reason_code = 'ORDER_NOT_READY',
+            locked_by = NULL,
+            locked_at = NULL,
+            updated_at = ?
+          WHERE id = ?
+            AND locked_by = ?
+        `,
+      )
+      .run(
+        availableAt,
+        decision.decisionId,
+        now.toISOString(),
+        job.job_id,
+        this.workerId,
+      );
   }
 
-  private shouldApplySetField(
-    database: EventEngineDatabase,
-    event: IncomingEvent,
-    fieldName: string,
-  ): FieldMergeDecision {
-    const version = database.orderFieldVersions.find(
-      (item) => item.orderId === event.orderId && item.fieldName === fieldName,
-    );
+  private hasPendingPaymentForOrder(
+    orderId: string,
+    refundTimestamp: number,
+  ): boolean {
+    const row = this.db
+      .prepare(
+        `
+          SELECT COUNT(*) AS count
+          FROM event_processing_jobs jobs
+          JOIN raw_incoming_events raw ON raw.id = jobs.raw_incoming_event_id
+          WHERE raw.order_id = ?
+            AND raw.type = 'PAYMENT_CAPTURED'
+            AND raw.event_timestamp <= ?
+            AND jobs.status IN ('PENDING', 'DEFERRED')
+        `,
+      )
+      .get(orderId, refundTimestamp) as { count: number };
 
-    if (!version || event.timestamp > version.lastEventTimestamp) {
-      return { apply: true };
+    return row.count > 0;
+  }
+
+  private writeDecision(input: DecisionInput): DecisionResult {
+    const result = this.db
+      .prepare(
+        `
+          INSERT INTO event_decisions (
+            raw_incoming_event_id,
+            event_processing_job_id,
+            event_id,
+            order_id,
+            type,
+            timestamp,
+            decision,
+            reason_code,
+            reason_message,
+            details_json,
+            processing_time_ms,
+            created_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+      )
+      .run(
+        input.job.raw_incoming_event_id,
+        input.job.job_id,
+        input.event.eventId ?? input.job.event_id,
+        input.event.orderId ?? input.job.order_id,
+        input.event.type ?? input.job.type,
+        input.event.timestamp ?? input.job.event_timestamp,
+        input.decision,
+        input.reasonCode,
+        input.reasonMessage,
+        JSON.stringify(input.details ?? {}),
+        input.processingTimeMs,
+        new Date().toISOString(),
+      );
+
+    this.verboseLog('decision written', {
+      decisionId: Number(result.lastInsertRowid),
+      jobId: input.job.job_id,
+      rawIncomingEventId: input.job.raw_incoming_event_id,
+      eventId: input.event.eventId ?? input.job.event_id,
+      orderId: input.event.orderId ?? input.job.order_id,
+      type: input.event.type ?? input.job.type,
+      decision: input.decision,
+      reasonCode: input.reasonCode,
+      reasonMessage: input.reasonMessage,
+      processingTimeMs: input.processingTimeMs,
+      details: input.details ?? {},
+    });
+
+    return { decisionId: Number(result.lastInsertRowid) };
+  }
+
+  private updateFinalStats(
+    decision: EngineDecision,
+    processingTimeMs: number,
+  ): void {
+    const acceptedIncrement = decision === 'ACCEPTED' ? 1 : 0;
+    const partialIncrement = decision === 'PARTIALLY_APPLIED' ? 1 : 0;
+    const rejectedIncrement =
+      decision === 'REJECTED' || decision === 'FAILED' ? 1 : 0;
+    const duplicateIncrement = decision === 'DUPLICATE' ? 1 : 0;
+    const validIncrement = acceptedIncrement + partialIncrement;
+
+    this.db
+      .prepare(
+        `
+          UPDATE stats
+          SET
+            valid_events_count = valid_events_count + ?,
+            accepted_events_count = accepted_events_count + ?,
+            partially_applied_events_count = partially_applied_events_count + ?,
+            rejected_events_count = rejected_events_count + ?,
+            duplicate_events_count = duplicate_events_count + ?,
+            processed_events_count = processed_events_count + 1,
+            total_processing_time_ms = total_processing_time_ms + ?,
+            updated_at = ?
+          WHERE id = 1
+        `,
+      )
+      .run(
+        validIncrement,
+        acceptedIncrement,
+        partialIncrement,
+        rejectedIncrement,
+        duplicateIncrement,
+        processingTimeMs,
+        new Date().toISOString(),
+      );
+  }
+
+  private writeHistory(
+    event: ValidOrderEvent,
+    fromStatus: OrderStatus | null,
+    toStatus: OrderStatus,
+    changedFields: Record<string, unknown>,
+    skippedFields: Record<string, unknown>,
+    decision: 'ACCEPTED' | 'PARTIALLY_APPLIED',
+    reasonCode: ReasonCode,
+  ): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `
+          INSERT INTO order_history (
+            order_id,
+            event_id,
+            event_type,
+            event_timestamp,
+            processed_at,
+            from_status,
+            to_status,
+            changed_fields_json,
+            skipped_fields_json,
+            decision,
+            reason_code,
+            created_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+      )
+      .run(
+        event.orderId,
+        event.eventId,
+        event.type,
+        event.timestamp,
+        now,
+        fromStatus,
+        toStatus,
+        JSON.stringify(changedFields),
+        JSON.stringify(skippedFields),
+        decision,
+        reasonCode,
+        now,
+      );
+  }
+
+  private claimDeduplicationKey(
+    job: ProcessingJobRow,
+    event: ValidOrderEvent,
+  ): boolean {
+    const existing = this.db
+      .prepare(
+        `
+          SELECT first_raw_incoming_event_id
+          FROM processed_event_keys
+          WHERE event_id = ?
+        `,
+      )
+      .get(event.eventId) as
+      | { first_raw_incoming_event_id: number }
+      | undefined;
+
+    if (existing) {
+      return existing.first_raw_incoming_event_id === job.raw_incoming_event_id;
     }
 
-    if (event.timestamp === version.lastEventTimestamp) {
+    this.db
+      .prepare(
+        `
+          INSERT INTO processed_event_keys (
+            event_id,
+            first_raw_incoming_event_id,
+            order_id,
+            first_seen_at
+          )
+          VALUES (?, ?, ?, ?)
+        `,
+      )
+      .run(
+        event.eventId,
+        job.raw_incoming_event_id,
+        event.orderId,
+        new Date().toISOString(),
+      );
+
+    return true;
+  }
+
+  private findOrder(orderId: string): OrderRow | null {
+    const row = this.db
+      .prepare(
+        `
+          SELECT
+            order_id,
+            status,
+            amount_minor,
+            currency,
+            paid_amount_minor,
+            refunded_amount_minor,
+            version,
+            max_accepted_event_timestamp,
+            last_accepted_event_id,
+            created_at,
+            updated_at
+          FROM orders
+          WHERE order_id = ?
+        `,
+      )
+      .get(orderId) as unknown as OrderRow | undefined;
+
+    return row ?? null;
+  }
+
+  private canApplyField(
+    orderId: string,
+    fieldName: string,
+    event: ValidOrderEvent,
+  ): boolean {
+    const row = this.db
+      .prepare(
+        `
+          SELECT last_event_timestamp
+          FROM order_field_versions
+          WHERE order_id = ? AND field_name = ?
+        `,
+      )
+      .get(orderId, fieldName) as { last_event_timestamp: number } | undefined;
+
+    return !row || event.timestamp > row.last_event_timestamp;
+  }
+
+  private upsertFieldVersion(
+    orderId: string,
+    fieldName: string,
+    event: ValidOrderEvent,
+  ): void {
+    this.db
+      .prepare(
+        `
+          INSERT INTO order_field_versions (
+            order_id,
+            field_name,
+            last_event_timestamp,
+            last_event_id,
+            updated_at
+          )
+          VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(order_id, field_name) DO UPDATE SET
+            last_event_timestamp = excluded.last_event_timestamp,
+            last_event_id = excluded.last_event_id,
+            updated_at = excluded.updated_at
+        `,
+      )
+      .run(
+        orderId,
+        fieldName,
+        event.timestamp,
+        event.eventId,
+        new Date().toISOString(),
+      );
+  }
+
+  private releaseDeferredJobsForOrder(orderId: string): void {
+    this.db
+      .prepare(
+        `
+          UPDATE event_processing_jobs
+          SET available_at = ?, updated_at = ?
+          WHERE status = 'DEFERRED'
+            AND locked_by IS NULL
+            AND raw_incoming_event_id IN (
+              SELECT id
+              FROM raw_incoming_events
+              WHERE order_id = ?
+            )
+        `,
+      )
+      .run(new Date().toISOString(), new Date().toISOString(), orderId);
+  }
+
+  private canTransition(from: OrderStatus, to: OrderStatus): boolean {
+    if (from === to) {
+      return true;
+    }
+
+    const allowed: Record<OrderStatus, OrderStatus[]> = {
+      CREATED: ['PAID', 'CANCELLED'],
+      PAID: ['PARTIALLY_REFUNDED', 'REFUNDED'],
+      CANCELLED: [],
+      PARTIALLY_REFUNDED: ['REFUNDED'],
+      REFUNDED: [],
+    };
+
+    return allowed[from].includes(to);
+  }
+
+  private validateRawEvent(job: ProcessingJobRow):
+    | { valid: true; event: ValidOrderEvent }
+    | {
+        valid: false;
+        reasonCode: ReasonCode;
+        reasonMessage: string;
+        details?: Record<string, unknown>;
+      } {
+    const raw = JSON.parse(job.raw_event_json) as unknown;
+
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
       return {
-        apply: false,
-        reason: `${fieldName} already has a value from timestamp ${event.timestamp}`,
+        valid: false,
+        reasonCode: 'INVALID_SCHEMA',
+        reasonMessage: 'Event item must be a JSON object',
       };
     }
 
+    const record = raw as Record<string, unknown>;
+    const eventId = this.readRequiredString(record.eventId);
+    const orderId = this.readRequiredString(record.orderId);
+    const timestamp = this.readRequiredTimestamp(record.timestamp);
+    const payload = this.readPayload(record.payload);
+
+    if (!eventId || !orderId || timestamp === null || !payload.valid) {
+      return {
+        valid: false,
+        reasonCode: 'INVALID_SCHEMA',
+        reasonMessage:
+          'Event is missing required fields or has invalid payload',
+        details: {
+          eventId: Boolean(eventId),
+          orderId: Boolean(orderId),
+          timestamp: timestamp !== null,
+          payload: payload.valid,
+        },
+      };
+    }
+
+    if (typeof record.type !== 'string') {
+      return {
+        valid: false,
+        reasonCode: 'INVALID_SCHEMA',
+        reasonMessage: 'Event type must be a string',
+      };
+    }
+
+    if (!supportedEventTypes.includes(record.type as SupportedEventType)) {
+      return {
+        valid: false,
+        reasonCode: 'UNKNOWN_EVENT_TYPE',
+        reasonMessage: `Unsupported event type: ${record.type}`,
+      };
+    }
+
+    const event = {
+      eventId,
+      orderId,
+      type: record.type as SupportedEventType,
+      timestamp,
+      payload: payload.value,
+    };
+    const payloadError = this.validatePayloadValues(event);
+
+    if (payloadError) {
+      return payloadError;
+    }
+
+    return { valid: true, event };
+  }
+
+  private validatePayloadValues(event: ValidOrderEvent): {
+    valid: false;
+    reasonCode: ReasonCode;
+    reasonMessage: string;
+    details?: Record<string, unknown>;
+  } | null {
+    try {
+      if (Object.prototype.hasOwnProperty.call(event.payload, 'amount')) {
+        this.optionalMoneyToMinor(event.payload.amount);
+      }
+
+      if (Object.prototype.hasOwnProperty.call(event.payload, 'refundAmount')) {
+        this.optionalMoneyToMinor(event.payload.refundAmount);
+      }
+
+      if (Object.prototype.hasOwnProperty.call(event.payload, 'currency')) {
+        this.optionalCurrency(event.payload.currency);
+      }
+
+      if (Object.prototype.hasOwnProperty.call(event.payload, 'status')) {
+        this.readOrderStatus(event.payload.status);
+      }
+    } catch (error) {
+      return {
+        valid: false,
+        reasonCode: 'INVALID_SCHEMA',
+        reasonMessage:
+          error instanceof Error ? error.message : 'Invalid payload values',
+      };
+    }
+
+    return null;
+  }
+
+  private partialEventFromJob(job: ProcessingJobRow): Partial<ValidOrderEvent> {
     return {
-      apply: false,
-      reason: `${fieldName} is older than the accepted field version`,
+      eventId: job.event_id ?? undefined,
+      orderId: job.order_id ?? undefined,
+      type: supportedEventTypes.includes(job.type as SupportedEventType)
+        ? (job.type as SupportedEventType)
+        : undefined,
+      timestamp: job.event_timestamp ?? undefined,
     };
   }
 
-  private rememberFieldVersion(
-    database: EventEngineDatabase,
-    event: IncomingEvent,
-    fieldName: string,
-  ): void {
-    const existing = database.orderFieldVersions.find(
-      (item) => item.orderId === event.orderId && item.fieldName === fieldName,
-    );
-    const now = new Date().toISOString();
+  private readPayload(
+    value: unknown,
+  ): { valid: true; value: Record<string, unknown> } | { valid: false } {
+    if (value === undefined) {
+      return { valid: true, value: {} };
+    }
 
-    if (existing) {
-      existing.lastEventTimestamp = event.timestamp;
-      existing.lastEventId = event.eventId;
-      existing.updatedAt = now;
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      return { valid: false };
+    }
+
+    return { valid: true, value: value as Record<string, unknown> };
+  }
+
+  private readRequiredString(value: unknown): string | null {
+    if (typeof value !== 'string') {
+      return null;
+    }
+
+    const trimmed = value.trim();
+    return trimmed.length === 0 ? null : trimmed;
+  }
+
+  private readRequiredTimestamp(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  }
+
+  private readOrderStatus(value: unknown): OrderStatus {
+    if (
+      typeof value !== 'string' ||
+      !orderStatuses.includes(value as OrderStatus)
+    ) {
+      throw new Error('Invalid order status');
+    }
+
+    return value as OrderStatus;
+  }
+
+  private optionalCurrency(value: unknown): string | null {
+    if (value === undefined || value === null) {
+      return null;
+    }
+
+    if (typeof value !== 'string' || !/^[A-Z]{3}$/.test(value)) {
+      throw new Error('Invalid currency field');
+    }
+
+    return value;
+  }
+
+  private optionalMoneyToMinor(value: unknown): number | null {
+    if (value === undefined || value === null) {
+      return null;
+    }
+
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+      throw new Error('Invalid money field');
+    }
+
+    const minor = Math.round(value * 100);
+
+    if (Math.abs(value * 100 - minor) > 1e-6) {
+      throw new Error('Money field supports at most two decimal places');
+    }
+
+    return minor;
+  }
+
+  private positiveMoneyToMinor(value: unknown): number | null {
+    try {
+      const minor = this.optionalMoneyToMinor(value);
+      return minor !== null && minor > 0 ? minor : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private recordTechnicalFailure(job: ProcessingJobRow, error: unknown): void {
+    this.sqliteService.transaction(() => {
+      const attempts = job.attempts + 1;
+      const now = new Date();
+      const message = error instanceof Error ? error.message : String(error);
+
+      if (attempts >= this.maxAttempts) {
+        const decision = this.writeDecision({
+          job,
+          event: this.partialEventFromJob(job),
+          decision: 'FAILED',
+          reasonCode: 'PROCESSING_ERROR',
+          reasonMessage: message,
+          processingTimeMs: 0,
+        });
+        this.updateFinalStats('FAILED', 0);
+        this.db
+          .prepare(
+            `
+              INSERT INTO dead_letter_events (
+                event_processing_job_id,
+                raw_incoming_event_id,
+                event_id,
+                order_id,
+                type,
+                timestamp,
+                raw_event_json,
+                reason_code,
+                error_message,
+                attempts,
+                created_at
+              )
+              VALUES (?, ?, ?, ?, ?, ?, ?, 'PROCESSING_ERROR', ?, ?, ?)
+            `,
+          )
+          .run(
+            job.job_id,
+            job.raw_incoming_event_id,
+            job.event_id,
+            job.order_id,
+            job.type,
+            job.event_timestamp,
+            job.raw_event_json,
+            message,
+            attempts,
+            now.toISOString(),
+          );
+        this.db
+          .prepare(
+            `
+              UPDATE event_processing_jobs
+              SET
+                status = 'DEAD_LETTERED',
+                attempts = ?,
+                last_error_message = ?,
+                last_decision_id = ?,
+                last_reason_code = 'PROCESSING_ERROR',
+                locked_by = NULL,
+                locked_at = NULL,
+                updated_at = ?
+              WHERE id = ?
+                AND locked_by = ?
+            `,
+          )
+          .run(
+            attempts,
+            message,
+            decision.decisionId,
+            now.toISOString(),
+            job.job_id,
+            this.workerId,
+          );
+        return;
+      }
+
+      this.db
+        .prepare(
+          `
+            UPDATE event_processing_jobs
+            SET
+              status = 'PENDING',
+              attempts = ?,
+              available_at = ?,
+              last_error_message = ?,
+              locked_by = NULL,
+              locked_at = NULL,
+              updated_at = ?
+            WHERE id = ?
+              AND locked_by = ?
+          `,
+        )
+        .run(
+          attempts,
+          new Date(now.getTime() + this.retryDelayMs).toISOString(),
+          message,
+          now.toISOString(),
+          job.job_id,
+          this.workerId,
+        );
+
+      this.verboseLog('technical retry scheduled', {
+        jobId: job.job_id,
+        rawIncomingEventId: job.raw_incoming_event_id,
+        attempts,
+        errorMessage: message,
+      });
+    });
+  }
+
+  private verboseLog(message: string, details: Record<string, unknown>): void {
+    if (!this.verboseLogs) {
       return;
     }
 
-    database.orderFieldVersions.push({
-      orderId: event.orderId,
-      fieldName,
-      lastEventTimestamp: event.timestamp,
-      lastEventId: event.eventId,
-      updatedAt: now,
-    });
-  }
-
-  private rememberLatestFieldEvent(
-    database: EventEngineDatabase,
-    event: IncomingEvent,
-    fieldName: string,
-  ): void {
-    const existing = database.orderFieldVersions.find(
-      (item) => item.orderId === event.orderId && item.fieldName === fieldName,
-    );
-
-    if (!existing || event.timestamp > existing.lastEventTimestamp) {
-      this.rememberFieldVersion(database, event, fieldName);
-    }
-  }
-
-  private appendHistory(
-    database: EventEngineDatabase,
-    order: OrderRecord,
-    event: IncomingEvent,
-    changes: AppliedChangeSet,
-    decision: Extract<Decision, 'ACCEPTED' | 'PARTIALLY_APPLIED'>,
-    reasonCode: ReasonCode,
-  ): void {
-    const now = new Date().toISOString();
-    database.orderHistory.push({
-      id: database.nextIds.orderHistory++,
-      orderId: order.orderId,
-      eventId: event.eventId,
-      eventType: event.type,
-      eventTimestamp: event.timestamp,
-      processedAt: now,
-      fromStatus: changes.fromStatus,
-      toStatus: changes.toStatus,
-      changedFields: changes.changedFields,
-      skippedFields: changes.skippedFields,
-      decision,
-      reasonCode,
-      createdAt: now,
-    });
-  }
-
-  private finish(
-    database: EventEngineDatabase,
-    raw: RawIncomingEventRecord,
-    decision: Decision,
-    reasonCode: ReasonCode,
-    reasonMessage: string,
-    details: Record<string, unknown>,
-    startedAt: number,
-    final: boolean,
-    stateChanged: boolean,
-    event?: IncomingEvent,
-  ): ProcessOneResult {
-    const now = new Date().toISOString();
-    const processingTimeMs = Date.now() - startedAt;
-    const decisionRecord: EventDecisionRecord = {
-      id: database.nextIds.eventDecision++,
-      rawIncomingEventId: raw.id,
-      eventId: event?.eventId ?? raw.eventId,
-      orderId: event?.orderId ?? raw.orderId,
-      type: event?.type ?? raw.type,
-      timestamp: event?.timestamp ?? raw.eventTimestamp,
-      decision,
-      reasonCode,
-      reasonMessage,
-      details,
-      processingTimeMs,
-      createdAt: now,
-    };
-
-    database.eventDecisions.push(decisionRecord);
-    raw.processingStatus = final ? 'DONE' : 'DEFERRED';
-    raw.lastDecisionId = decisionRecord.id;
-    raw.lastReasonCode = reasonCode;
-
-    if (final) {
-      this.updateStats(database, decision, processingTimeMs);
-    }
-
-    return { final, stateChanged, decision: decisionRecord };
-  }
-
-  private deferUntilOrderExists(
-    database: EventEngineDatabase,
-    raw: RawIncomingEventRecord,
-    event: IncomingEvent,
-    startedAt: number,
-  ): ProcessOneResult {
-    if (
-      raw.processingStatus === 'DEFERRED' &&
-      raw.lastReasonCode === 'ORDER_NOT_READY' &&
-      raw.lastDecisionId !== null
-    ) {
-      const decision = database.eventDecisions.find(
-        (item) => item.id === raw.lastDecisionId,
-      );
-      if (decision) {
-        return { final: false, stateChanged: false, decision };
-      }
-    }
-
-    return this.finish(
-      database,
-      raw,
-      'DEFERRED',
-      'ORDER_NOT_READY',
-      'Order does not exist yet; event will be retried after future ingestions',
-      {},
-      startedAt,
-      false,
-      false,
-      event,
-    );
-  }
-
-  private forbiddenTransition(
-    database: EventEngineDatabase,
-    raw: RawIncomingEventRecord,
-    event: IncomingEvent,
-    startedAt: number,
-    reason: string,
-  ): ProcessOneResult {
-    return this.finish(
-      database,
-      raw,
-      'REJECTED',
-      'FORBIDDEN_TRANSITION',
-      reason,
-      {},
-      startedAt,
-      true,
-      false,
-      event,
-    );
-  }
-
-  private invalidMoney(
-    database: EventEngineDatabase,
-    raw: RawIncomingEventRecord,
-    event: IncomingEvent,
-    startedAt: number,
-    fieldName: string,
-  ): ProcessOneResult {
-    return this.finish(
-      database,
-      raw,
-      'REJECTED',
-      'INVALID_SCHEMA',
-      `${fieldName} must be a non-negative decimal amount with at most two fractional digits`,
-      { fieldName, value: event.payload[fieldName] },
-      startedAt,
-      true,
-      false,
-      event,
-    );
-  }
-
-  private invalidCurrency(
-    database: EventEngineDatabase,
-    raw: RawIncomingEventRecord,
-    event: IncomingEvent,
-    startedAt: number,
-  ): ProcessOneResult {
-    return this.finish(
-      database,
-      raw,
-      'REJECTED',
-      'INVALID_SCHEMA',
-      'currency must be a three-letter uppercase code',
-      { currency: event.payload.currency },
-      startedAt,
-      true,
-      false,
-      event,
-    );
-  }
-
-  private readOptionalMoney(value: unknown): {
-    valid: boolean;
-    value: number | null;
-  } {
-    if (!hasMoneyValue(value)) {
-      return { valid: true, value: null };
-    }
-
-    const amountMinor = toMinorUnits(value);
-    return { valid: amountMinor !== null, value: amountMinor };
-  }
-
-  private readOptionalCurrency(value: unknown): {
-    valid: boolean;
-    value: string | null;
-  } {
-    if (value === undefined || value === null) {
-      return { valid: true, value: null };
-    }
-
-    const currency = optionalString(value);
-    return {
-      valid: currency !== null && /^[A-Z]{3}$/.test(currency),
-      value: currency,
-    };
-  }
-
-  private touchOrder(order: OrderRecord, event: IncomingEvent): void {
-    order.version += 1;
-    order.maxAcceptedEventTimestamp = Math.max(
-      order.maxAcceptedEventTimestamp,
-      event.timestamp,
-    );
-    order.lastAcceptedEventId = event.eventId;
-    order.updatedAt = new Date().toISOString();
-  }
-
-  private findOrder(database: EventEngineDatabase, orderId: string) {
-    return database.orders.find((order) => order.orderId === orderId) ?? null;
-  }
-
-  private updateStats(
-    database: EventEngineDatabase,
-    decision: Decision,
-    processingTimeMs: number,
-  ): void {
-    if (decision === 'ACCEPTED') {
-      database.stats.acceptedEventsCount += 1;
-      database.stats.validEventsCount += 1;
-    }
-    if (decision === 'PARTIALLY_APPLIED') {
-      database.stats.partiallyAppliedEventsCount += 1;
-      database.stats.validEventsCount += 1;
-    }
-    if (decision === 'REJECTED' || decision === 'FAILED') {
-      database.stats.rejectedEventsCount += 1;
-    }
-    if (decision === 'DUPLICATE') {
-      database.stats.duplicateEventsCount += 1;
-    }
-
-    database.stats.processedEventsCount += 1;
-    database.stats.totalProcessingTimeMs += processingTimeMs;
-    database.stats.updatedAt = new Date().toISOString();
-  }
-
-  private isSupportedType(type: string): type is EventType {
-    return [
-      'ORDER_CREATED',
-      'ORDER_UPDATED',
-      'PAYMENT_CAPTURED',
-      'ORDER_CANCELLED',
-      'REFUND_ISSUED',
-    ].includes(type);
-  }
-
-  private handleTechnicalFailure(
-    database: EventEngineDatabase,
-    raw: RawIncomingEventRecord,
-    error: unknown,
-  ): ProcessOneResult {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    raw.attempts += 1;
-    raw.lastErrorMessage = errorMessage;
-
-    if (raw.attempts < this.maxTechnicalAttempts) {
-      raw.processingStatus = 'PENDING';
-      raw.availableAt = new Date(
-        Date.now() + raw.attempts * this.retryDelayMs,
-      ).toISOString();
-      return { final: false, stateChanged: false };
-    }
-
-    const now = new Date().toISOString();
-    raw.processingStatus = 'DEAD_LETTERED';
-    raw.availableAt = now;
-
-    const decisionRecord: EventDecisionRecord = {
-      id: database.nextIds.eventDecision++,
-      rawIncomingEventId: raw.id,
-      eventId: raw.eventId,
-      orderId: raw.orderId,
-      type: raw.type,
-      timestamp: raw.eventTimestamp,
-      decision: 'FAILED',
-      reasonCode: 'PROCESSING_ERROR',
-      reasonMessage: 'Technical processing failed and was moved to DLQ',
-      details: { errorMessage, attempts: raw.attempts },
-      processingTimeMs: 0,
-      createdAt: now,
-    };
-
-    const deadLetterEvent: DeadLetterEventRecord = {
-      id: database.nextIds.deadLetterEvent++,
-      rawIncomingEventId: raw.id,
-      eventId: raw.eventId,
-      orderId: raw.orderId,
-      type: raw.type,
-      timestamp: raw.eventTimestamp,
-      rawEvent: raw.rawEvent,
-      reasonCode: 'PROCESSING_ERROR',
-      errorMessage,
-      attempts: raw.attempts,
-      createdAt: now,
-    };
-
-    database.eventDecisions.push(decisionRecord);
-    database.deadLetterEvents.push(deadLetterEvent);
-    raw.lastDecisionId = decisionRecord.id;
-    raw.lastReasonCode = 'PROCESSING_ERROR';
-    this.updateStats(database, 'FAILED', 0);
-
-    return { final: true, stateChanged: false, decision: decisionRecord };
+    this.logger.log(`${message} ${JSON.stringify(details)}`);
   }
 }

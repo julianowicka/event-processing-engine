@@ -1,39 +1,22 @@
-import { BadRequestException, Body, Controller, Post } from '@nestjs/common';
-import { EventIngestionService } from './event-ingestion.service';
-import { EventWorkerService } from './event-worker.service';
+import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import type { EventDetailsResponse, QueueEventsResponse } from './event.types';
+import { EventReadService } from './event-read.service';
+import { EventsService } from './events.service';
 
 @Controller('events')
 export class EventsController {
   constructor(
-    private readonly ingestion: EventIngestionService,
-    private readonly worker: EventWorkerService,
+    private readonly eventsService: EventsService,
+    private readonly eventReadService: EventReadService,
   ) {}
 
   @Post()
-  postEvents(@Body() body: unknown) {
-    if (!Array.isArray(body)) {
-      throw new BadRequestException('Request body must be a JSON array');
-    }
+  enqueue(@Body() body: unknown): QueueEventsResponse {
+    return this.eventsService.enqueueBatch(body);
+  }
 
-    const rawDeliveries = this.ingestion.ingest(body);
-    this.worker.requestRun();
-    const results = rawDeliveries.map((item) => ({
-      incomingEventId: item.id,
-      eventId: item.eventId,
-      orderId: item.orderId,
-      type: item.type,
-      status: 'QUEUED',
-      reasonCode: null,
-      reasonMessage: 'Event queued for background processing',
-      processingTimeMs: 0,
-    }));
-
-    return {
-      mode: 'ASYNC_WORKER',
-      results,
-      summary: {
-        queued: results.length,
-      },
-    };
+  @Get(':eventId')
+  getEvent(@Param('eventId') eventId: string): EventDetailsResponse {
+    return this.eventReadService.getEventDetails(eventId);
   }
 }

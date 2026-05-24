@@ -1,12 +1,13 @@
 import { Controller, Get, Param } from '@nestjs/common';
 import { OrdersService } from './orders.service';
+import type { OrderDetailsResponse } from './orders.types';
 
 @Controller('orders')
 export class OrdersController {
-  constructor(private readonly orders: OrdersService) {}
+  constructor(private readonly ordersService: OrdersService) {}
 
   @Get(':id')
-  getOrder(@Param('id') orderId: string) {
-    return this.orders.getOrder(orderId);
+  getOrder(@Param('id') id: string): OrderDetailsResponse {
+    return this.ordersService.getOrderDetails(id);
   }
 }
