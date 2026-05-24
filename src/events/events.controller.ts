@@ -1,7 +1,9 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
-import type { EventDetailsResponse, QueueEventsResponse } from './event.types';
+import type { JsonValue } from '../common/json.types';
+import type { EventDetailsResponse } from './event.types';
 import { EventReadService } from './event-read.service';
 import { EventsService } from './events.service';
+import type { QueueEventsResponse } from './events.types';
 
 @Controller('events')
 export class EventsController {
@@ -11,7 +13,7 @@ export class EventsController {
   ) {}
 
   @Post()
-  enqueue(@Body() body: unknown): QueueEventsResponse {
+  enqueue(@Body() body: JsonValue): QueueEventsResponse {
     return this.eventsService.enqueueBatch(body);
   }
 

@@ -1,38 +1,40 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import type { DatabaseSync as DatabaseSyncInstance } from 'node:sqlite';
-import { SqliteService } from '../database/sqlite.service';
+import type { JsonObject, JsonValue } from '../common/json.types';
+import { isJsonObject } from '../common/json.util';
 import type {
   EventProjection,
+  QueueEventInput,
+  QueueEventsRequest,
   QueuedEventResult,
+  QueuedEventRecord,
   QueueEventsResponse,
-} from './event.types';
+} from './events.types';
+import { EventsRepository } from './events.repository';
 import { EventWorkerService } from './event-worker.service';
+import { verboseLog } from './event-verbose-logger';
 
 @Injectable()
 export class EventsService {
   private readonly logger = new Logger(EventsService.name);
-  private readonly db: DatabaseSyncInstance;
-  private readonly verboseLogs =
-    process.env.EVENT_WORKER_VERBOSE_LOGS === 'true' ||
-    process.env.EVENT_WORKER_VERBOSE_LOGS === '1';
 
   constructor(
-    private readonly sqliteService: SqliteService,
+    private readonly eventsRepository: EventsRepository,
     private readonly eventWorkerService: EventWorkerService,
-  ) {
-    this.db = sqliteService.connection;
-  }
+  ) {}
 
-  enqueueBatch(body: unknown): QueueEventsResponse {
-    if (!Array.isArray(body)) {
+  enqueueBatch(body: JsonValue): QueueEventsResponse {
+    if (!this.isQueueEventsRequest(body)) {
       throw new BadRequestException('Request body must be a JSON array');
     }
 
-    const results = this.sqliteService.transaction(() =>
-      body.map((eventItem) => this.enqueueSingle(eventItem)),
+    const projections: EventProjection[] = body.map((eventItem) =>
+      this.projectEvent(eventItem),
     );
+    const results: QueuedEventResult[] = this.eventsRepository
+      .enqueueBatch(projections)
+      .map((queuedEvent) => this.toQueuedEventResult(queuedEvent));
 
-    this.verboseLog('batch queued', {
+    verboseLog(this.logger, 'batch queued', {
       queued: results.length,
       incomingEventIds: results.map((result) => result.incomingEventId),
       processingJobIds: results.map((result) => result.processingJobId),
@@ -49,54 +51,14 @@ export class EventsService {
     };
   }
 
-  private enqueueSingle(eventItem: unknown): QueuedEventResult {
-    const now = new Date().toISOString();
-    const projection = this.projectEvent(eventItem);
-    const rawInsertResult = this.db
-      .prepare(
-        `
-          INSERT INTO raw_incoming_events (
-            event_id,
-            order_id,
-            type,
-            event_timestamp,
-            raw_event_json,
-            payload_json,
-            received_at
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `,
-      )
-      .run(
-        projection.eventId,
-        projection.orderId,
-        projection.type,
-        projection.timestamp,
-        projection.rawEventJson,
-        projection.payloadJson,
-        now,
-      );
-
-    const incomingEventId = Number(rawInsertResult.lastInsertRowid);
-    const jobInsertResult = this.db
-      .prepare(
-        `
-          INSERT INTO event_processing_jobs (
-            raw_incoming_event_id,
-            status,
-            available_at,
-            attempts,
-            created_at,
-            updated_at
-          )
-          VALUES (?, 'PENDING', ?, 0, ?, ?)
-        `,
-      )
-      .run(incomingEventId, now, now, now);
+  private toQueuedEventResult(
+    queuedEvent: QueuedEventRecord,
+  ): QueuedEventResult {
+    const { projection } = queuedEvent;
 
     return {
-      incomingEventId,
-      processingJobId: Number(jobInsertResult.lastInsertRowid),
+      incomingEventId: queuedEvent.incomingEventId,
+      processingJobId: queuedEvent.processingJobId,
       eventId: projection.eventId,
       orderId: projection.orderId,
       type: projection.type,
@@ -107,7 +69,7 @@ export class EventsService {
     };
   }
 
-  private projectEvent(eventItem: unknown): EventProjection {
+  private projectEvent(eventItem: QueueEventInput): EventProjection {
     const record = this.asRecord(eventItem);
     const payload = record ? this.asRecord(record.payload) : null;
 
@@ -121,15 +83,11 @@ export class EventsService {
     };
   }
 
-  private asRecord(value: unknown): Record<string, unknown> | null {
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-      return null;
-    }
-
-    return value as Record<string, unknown>;
+  private asRecord(value: JsonValue | undefined): JsonObject | null {
+    return isJsonObject(value) ? value : null;
   }
 
-  private readNonEmptyString(value: unknown): string | null {
+  private readNonEmptyString(value: JsonValue | undefined): string | null {
     if (typeof value !== 'string') {
       return null;
     }
@@ -138,7 +96,7 @@ export class EventsService {
     return trimmed.length === 0 ? null : trimmed;
   }
 
-  private readFiniteNumber(value: unknown): number | null {
+  private readFiniteNumber(value: JsonValue | undefined): number | null {
     if (typeof value !== 'number' || !Number.isFinite(value)) {
       return null;
     }
@@ -146,15 +104,11 @@ export class EventsService {
     return value;
   }
 
-  private stringifyJson(value: unknown): string {
+  private stringifyJson(value: JsonValue): string {
     return JSON.stringify(value) ?? 'null';
   }
 
-  private verboseLog(message: string, details: Record<string, unknown>): void {
-    if (!this.verboseLogs) {
-      return;
-    }
-
-    this.logger.log(`${message} ${JSON.stringify(details)}`);
+  private isQueueEventsRequest(body: JsonValue): body is QueueEventsRequest {
+    return Array.isArray(body);
   }
 }

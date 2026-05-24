@@ -4,21 +4,23 @@ import { EventProcessingService } from './event-processing.service';
 import { EventReadService } from './event-read.service';
 import { EventWorkerService } from './event-worker.service';
 import { EventsController } from './events.controller';
+import { EventsRepository } from './events.repository';
 import { EventsService } from './events.service';
 import { EventAuditRepository } from './processing/event-audit.repository';
 import { EventDecisionService } from './processing/event-decision.service';
 import { EventJobRepository } from './processing/event-job.repository';
 import { EventValidationService } from './processing/event-validation.service';
-import { OrderEventApplicationService } from './processing/order-event-application.service';
-import { OrderMergeService } from './processing/order-merge.service';
 import { OrderRepository } from './processing/order.repository';
-import { OrderStateMachineService } from './processing/order-state-machine.service';
+import { OrderEventStateMachineService } from './processing/state-machine/order-event-state-machine.service';
+import { OrderStatusTransitionRulesService } from './processing/state-machine/order-status-transition-rules.service';
+import { OrderUpdatedEventFieldsService } from './processing/state-machine/order-updated-event-fields.service';
 
 @Module({
   imports: [DatabaseModule],
   controllers: [EventsController],
   providers: [
     EventsService,
+    EventsRepository,
     EventReadService,
     EventProcessingService,
     EventWorkerService,
@@ -26,9 +28,9 @@ import { OrderStateMachineService } from './processing/order-state-machine.servi
     OrderRepository,
     EventAuditRepository,
     EventValidationService,
-    OrderEventApplicationService,
-    OrderStateMachineService,
-    OrderMergeService,
+    OrderEventStateMachineService,
+    OrderStatusTransitionRulesService,
+    OrderUpdatedEventFieldsService,
     EventDecisionService,
   ],
 })
