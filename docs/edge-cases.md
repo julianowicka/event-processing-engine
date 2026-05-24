@@ -8,7 +8,10 @@ Same `eventId` appears again.
 
 Decision: `DUPLICATE`.
 
-Action: store the raw delivery, skip state changes, and write an audit decision.
+
+
+Action: store the raw delivery, create a processing job, skip state changes,
+write a `DUPLICATE` audit decision, and mark the job as `DONE`.
 
 ## Unknown Event Type
 
@@ -16,7 +19,8 @@ Event type is not supported.
 
 Decision: `REJECTED`.
 
-Action: store the raw delivery and write `UNKNOWN_EVENT_TYPE`.
+Action: store the raw delivery, create a processing job, and write
+`UNKNOWN_EVENT_TYPE`.
 
 ## Event Before Create
 
@@ -24,13 +28,14 @@ An update, payment, cancellation, or refund arrives for an unknown order.
 
 Decision: `DEFERRED`.
 
-Action: keep the event pending with reason `ORDER_NOT_READY`. It is retried after
-future ingestions. This avoids permanently losing valid out-of-order events.
+Action: keep the processing job deferred with reason `ORDER_NOT_READY`. It is
+retried after future ingestions. This avoids permanently losing valid
+out-of-order events.
 
 ## Create After Deferred Event
 
 If an `ORDER_CREATED` event later creates the order, phase 2 retries deferred
-events. In a single batch this can happen inside the same `POST /events` call.
+jobs. In a single batch this can happen inside the same `POST /events` call.
 
 ## Cancelled Order Receives Payment
 
@@ -44,8 +49,9 @@ Action: preserve `CANCELLED` state and audit `FORBIDDEN_TRANSITION`.
 
 `REFUND_ISSUED` arrives before captured payment.
 
-Decision: `REJECTED` if the order exists, or `DEFERRED` if the order does not
-exist yet.
+Decision: `DEFERRED` if the order does not exist yet, or if a matching
+`PAYMENT_CAPTURED` job for the order is still pending. Otherwise `REJECTED`
+when the order exists but no payment can still make the refund valid.
 
 Action: do not change order state.
 

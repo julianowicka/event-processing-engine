@@ -5,11 +5,13 @@ Tests focus on the business rules that matter for the recruitment task.
 ## Implemented Unit Coverage
 
 - Worker-style processing of queued deliveries.
+- Raw deliveries are insert-only while job status changes in
+  `event_processing_jobs`.
 - Event arrives before `ORDER_CREATED` and is retried after creation.
 - Duplicate `eventId` handling.
 - Field-level partial merge for late updates.
 - Forbidden transition such as `CANCELLED -> PAID`.
-- Technical worker failure moves to DLQ after retry limit.
+- Technical worker failure moves the job to DLQ after retry limit.
 
 ## Additional Useful Scenarios
 

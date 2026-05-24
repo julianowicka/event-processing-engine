@@ -1,50 +1,83 @@
 # Event Processing Engine
 
-NestJS + TypeScript implementation of the order event processing recruitment
-task.
+NestJS + TypeScript application for processing asynchronous order events. The
+engine stores raw deliveries, processes them in the background, maintains the
+current order state, records history and audit decisions, and exposes processing
+statistics.
 
-The API queues event batches and a background worker processes them shortly
-after ingestion. This mirrors asynchronous integrations while keeping the
-project small enough for local recruitment-task evaluation.
+## Architecture Decisions
 
-## Requirements
+- Runtime: Node.js 24+.
+- Framework: NestJS 11.
+- Persistence: local SQLite database file.
+- Default database path: `data/app.sqlite`.
+- Database override: `SQLITE_DB_PATH=/absolute/path/app.sqlite`.
+- No ORM, workflow engine, or event-sourcing framework.
+- `POST /events` is ingestion-only and returns queued results.
+- `raw_incoming_events` is an insert-only raw delivery log.
+- `event_processing_jobs` is the technical queue/status table.
+- `EventWorkerService` processes pending and deferred jobs.
+- Deduplication is enforced through `processed_event_keys.event_id`.
+- Raw deliveries, processing jobs, order state, history, audit decisions, stats,
+  and DLQ records are stored in SQLite tables.
 
-- Node.js
-- Yarn Classic
+Detailed design documents live in [docs](./docs/README.md).
 
-The project uses a JSON file database on disk. By default it writes to
-`data/events-db.json`. You can override this path with `EVENT_ENGINE_DB_FILE`.
+## Run With Docker Compose
 
-The worker runs in the same Node.js process. Its polling interval defaults to
-100 ms and can be changed with `EVENT_ENGINE_WORKER_INTERVAL_MS`.
+```bash
+docker compose up --build
+```
 
-## Install
+Services:
+
+- API: `http://localhost:3100/api`
+- Frontend: `http://localhost:8080`
+- SQLite file in the `sqlite-data` Docker volume at `/data/app.sqlite`
+
+Verbose worker tracing can be enabled for debugging:
+
+```bash
+EVENT_WORKER_VERBOSE_LOGS=true docker compose up --build
+```
+
+Then inspect the processing flow with:
+
+```bash
+docker compose logs -f api
+```
+
+## Local Run
+
+This project uses the built-in Node.js SQLite module, so use Node.js 24 or
+newer.
 
 ```bash
 yarn install
-```
-
-## Run
-
-```bash
 yarn start:dev
 ```
 
-The app listens on `http://localhost:3000` unless `PORT` is set.
-
-## Test
+By default the API writes to `data/app.sqlite`. Override it with:
 
 ```bash
-yarn test
-yarn build
+SQLITE_DB_PATH=/absolute/path/app.sqlite yarn start:dev
 ```
 
-## API
+## Business API
 
-### `POST /events`
+- `POST /api/events`: accepts a batch of order events and queues them.
+- `GET /api/events/:eventId`: diagnostic event inspector with raw deliveries,
+  decisions, and matching history rows.
+- `GET /api/orders/:id`: returns current order state, history, rejected events,
+  pending jobs, and audit log.
+- `GET /api/stats`: returns valid, rejected, duplicate, timing, pending, and DLQ
+  counters.
+- `GET /api/health`: returns service status and configured database path.
+
+Example event batch:
 
 ```bash
-curl -X POST http://localhost:3000/events \
+curl -X POST http://localhost:3100/api/events \
   -H "Content-Type: application/json" \
   -d '[
     {
@@ -52,56 +85,18 @@ curl -X POST http://localhost:3000/events \
       "orderId": "ord-501",
       "type": "ORDER_CREATED",
       "timestamp": 1710000900,
-      "payload": { "amount": 199.99, "currency": "PLN" }
-    },
-    {
-      "eventId": "evt-1002",
-      "orderId": "ord-501",
-      "type": "PAYMENT_CAPTURED",
-      "timestamp": 1710001000,
-      "payload": { "amount": 199.99 }
+      "payload": {
+        "amount": 199.99,
+        "currency": "PLN"
+      }
     }
   ]'
 ```
 
-### `GET /orders/:id`
+## Test And Build
 
 ```bash
-curl http://localhost:3000/orders/ord-501
+yarn test
+yarn test:e2e
+yarn build
 ```
-
-Returns current state, history, rejected/duplicate events, pending events, and
-the full audit log for the order.
-
-### `GET /stats`
-
-```bash
-curl http://localhost:3000/stats
-```
-
-Returns valid, rejected, duplicate, and average processing-time counters, plus a
-few diagnostic counters.
-
-### `GET /health`
-
-```bash
-curl http://localhost:3000/health
-```
-
-## Business Rules
-
-- Duplicate `eventId` deliveries are ignored and audited as `DUPLICATE`.
-- Events for unknown orders are `DEFERRED`, then retried after later ingestions.
-- Technical worker failures are retried up to 3 times, then moved to the DLQ.
-- `ORDER_CREATED` creates `CREATED` orders.
-- `PAYMENT_CAPTURED` moves `CREATED -> PAID`.
-- `ORDER_CANCELLED` moves `CREATED -> CANCELLED`.
-- `REFUND_ISSUED` adds a refund amount and moves paid orders to
-  `PARTIALLY_REFUNDED` or `REFUNDED`.
-- `ORDER_UPDATED` can update `amount`, `currency`, and optionally request a
-  valid `payload.status` transition.
-- Set-like fields use strict newer-timestamp wins. Same timestamp keeps the
-  first accepted value.
-- Missing fields never erase existing state.
-
-More detail is in [docs/README.md](./docs/README.md).

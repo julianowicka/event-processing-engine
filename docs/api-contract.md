@@ -1,8 +1,10 @@
 # API Contract
 
 The API is asynchronous from the caller's perspective. `POST /events` stores raw
-deliveries and returns a queued response. A background worker then processes
-available deliveries in raw delivery order.
+
+
+deliveries, creates processing jobs, and returns a queued response. A background
+worker then processes available jobs in raw delivery order.
 
 ## Business Endpoints
 
@@ -11,12 +13,16 @@ available deliveries in raw delivery order.
 - `GET /stats`
 
 `GET /health` is operational and not part of the recruitment business contract.
+`GET /events/:eventId` is a diagnostic read endpoint used by the test console to
+inspect one event across raw deliveries, processing decisions, and accepted
+history rows.
 
 ## `POST /events`
 
-Accepts a JSON array of event objects. The endpoint stores every item as a raw
-delivery, including malformed items, then asks the background worker to process
-available work.
+Accepts a JSON array of event objects. The endpoint stores every item as an
+insert-only raw delivery, including malformed items, creates one
+`event_processing_jobs` row per delivery, then asks the background worker to
+process available work.
 
 Request example:
 
@@ -52,6 +58,7 @@ Response example:
   "results": [
     {
       "incomingEventId": 1,
+      "processingJobId": 1,
       "eventId": "evt-1001",
       "orderId": "ord-501",
       "type": "ORDER_CREATED",
@@ -62,6 +69,7 @@ Response example:
     },
     {
       "incomingEventId": 2,
+      "processingJobId": 2,
       "eventId": "evt-1002",
       "orderId": "ord-501",
       "type": "PAYMENT_CAPTURED",
@@ -78,7 +86,7 @@ Response example:
 ```
 
 Final processing decisions are visible through `GET /orders/:id`, `GET /stats`,
-and the JSON database after the worker runs.
+and the SQLite database after the worker runs.
 
 ## Worker Decisions
 
@@ -87,16 +95,27 @@ and the JSON database after the worker runs.
   field was skipped.
 - `REJECTED`: the event is final and did not change state.
 - `DUPLICATE`: the `eventId` was already seen by a different raw delivery.
-- `DEFERRED`: the event needs an order that does not exist yet and will be
-  retried later.
-- `FAILED`: a technical processing failure exhausted retries and moved to DLQ.
+- `DEFERRED`: the processing job needs an order that does not exist yet and will
+  be retried later.
+- `FAILED`: a technical processing failure exhausted retries and moved the job
+  to DLQ.
 
 ## `GET /orders/:id`
 
 Returns current state, accepted history, rejected/duplicate/failed decisions,
-pending decisions, and the complete audit log for the order.
+pending jobs with their latest decisions, and the complete audit log for the
+order.
 
 Unknown orders return `404` unless there is audit information for that order.
+
+## `GET /events/:eventId`
+
+Returns all raw deliveries for the external `eventId`, all audit decisions for
+that event, and any `order_history` entries produced by that event. This is
+intended for debugging duplicates, deferred retries, partial merges, and
+forbidden transitions from the frontend test console.
+
+Unknown event ids return `404`.
 
 ## `GET /stats`
 
@@ -116,8 +135,9 @@ Returns the required counters plus diagnostic counters.
 }
 ```
 
-Deferred events are not counted as rejected. Dead-lettered technical failures are
-counted as rejected.
+Deferred jobs are not counted as rejected. Dead-lettered technical failures are
+counted as rejected. `pendingEventsCount` is derived from
+`event_processing_jobs`, not from `raw_incoming_events`.
 
 ## `GET /health`
 

@@ -17,9 +17,9 @@ architecture.
 
 ## Persistence
 
-- JSON file stored on disk.
-- Default path: `data/events-db.json`.
-- Optional override: `EVENT_ENGINE_DB_FILE`.
+- Local SQLite database file stored on disk.
+- Default path: `data/app.sqlite`.
+- Optional override: `SQLITE_DB_PATH`.
 - No ORM.
 - No workflow engine.
 - No event-sourcing framework.
@@ -27,11 +27,14 @@ architecture.
 ## Processing
 
 - Explicit phase 1 ingestion service.
+- Inbox-style queue with immutable `raw_incoming_events` and mutable
+  `event_processing_jobs`.
 - In-process `EventWorkerService` for background processing.
 - Worker interval defaults to `100` ms and can be changed with
   `EVENT_ENGINE_WORKER_INTERVAL_MS`.
-- Deferred events for valid events that arrive before `ORDER_CREATED`.
-- Technical failures retry up to `3` attempts, then move to `deadLetterEvents`.
+- Deferred jobs for valid events that arrive before `ORDER_CREATED`.
+- Technical failures retry up to `3` attempts, then move the job to
+  `dead_letter_events`.
 
 ## Validation
 
@@ -47,5 +50,5 @@ architecture.
 
 ## Optional Future Work
 
-- SQLite when concurrent writes become important.
+- Worker claiming/locking for multi-process deployments.
 - API key guard if the API needs machine-to-machine protection.
