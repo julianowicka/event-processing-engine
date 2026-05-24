@@ -52,7 +52,11 @@ export class OrderMergeService {
       if (!canApplyField('status')) {
         fields.skipped.status = 'OBSOLETE_FIELD';
       } else if (
-        !this.stateMachineService.canTransition(order.status, requestedStatus)
+        !this.stateMachineService.canApplyEventTransition(
+          event.type,
+          order.status,
+          requestedStatus,
+        )
       ) {
         fields.skipped.status = 'FORBIDDEN_TRANSITION';
       } else {

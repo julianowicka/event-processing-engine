@@ -1,5 +1,6 @@
 import type {
   EngineDecision,
+  OrderRow,
   OrderStatus,
   ProcessingJobRow,
   ReasonCode,
@@ -39,6 +40,38 @@ export interface NextOrderState {
   paidAmountMinor: number;
   refundedAmountMinor: number;
 }
+
+export interface OrderEventApplicationContext {
+  order: OrderRow | null;
+  canApplyField(fieldName: string): boolean;
+  hasPendingPaymentForOrder(): boolean;
+}
+
+export interface CreatedOrderApplication {
+  amountMinor: number | null;
+  currency: string | null;
+  changedFields: Record<string, unknown>;
+}
+
+export type OrderEventApplicationResult =
+  | {
+      kind: 'CREATED';
+      createdOrder: CreatedOrderApplication;
+    }
+  | {
+      kind: 'MUTATION';
+      order: OrderRow;
+      nextState: NextOrderState;
+      fields: FieldChangeSet;
+    }
+  | {
+      kind: 'REJECTED';
+      decision: DecisionDescription;
+    }
+  | {
+      kind: 'DEFERRED';
+      decision: DecisionDescription;
+    };
 
 export type EventValidationResult =
   | { valid: true; event: ValidOrderEvent }

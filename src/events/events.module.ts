@@ -9,6 +9,7 @@ import { EventAuditRepository } from './processing/event-audit.repository';
 import { EventDecisionService } from './processing/event-decision.service';
 import { EventJobRepository } from './processing/event-job.repository';
 import { EventValidationService } from './processing/event-validation.service';
+import { OrderEventApplicationService } from './processing/order-event-application.service';
 import { OrderMergeService } from './processing/order-merge.service';
 import { OrderRepository } from './processing/order.repository';
 import { OrderStateMachineService } from './processing/order-state-machine.service';
@@ -25,6 +26,7 @@ import { OrderStateMachineService } from './processing/order-state-machine.servi
     OrderRepository,
     EventAuditRepository,
     EventValidationService,
+    OrderEventApplicationService,
     OrderStateMachineService,
     OrderMergeService,
     EventDecisionService,

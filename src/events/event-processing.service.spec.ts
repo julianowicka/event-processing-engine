@@ -7,6 +7,7 @@ import { EventAuditRepository } from './processing/event-audit.repository';
 import { EventDecisionService } from './processing/event-decision.service';
 import { EventJobRepository } from './processing/event-job.repository';
 import { EventValidationService } from './processing/event-validation.service';
+import { OrderEventApplicationService } from './processing/order-event-application.service';
 import { OrderMergeService } from './processing/order-merge.service';
 import { OrderRepository } from './processing/order.repository';
 import { OrderStateMachineService } from './processing/order-state-machine.service';
@@ -26,15 +27,24 @@ describe('EventProcessingService payment and refund guards', () => {
 
     const validationService = new EventValidationService();
     const stateMachineService = new OrderStateMachineService();
+    const mergeService = new OrderMergeService(
+      validationService,
+      stateMachineService,
+    );
+    const decisionService = new EventDecisionService();
     service = new EventProcessingService(
       sqliteService,
       new EventJobRepository(sqliteService),
       new OrderRepository(sqliteService),
       new EventAuditRepository(sqliteService),
       validationService,
-      stateMachineService,
-      new OrderMergeService(validationService, stateMachineService),
-      new EventDecisionService(),
+      new OrderEventApplicationService(
+        validationService,
+        stateMachineService,
+        mergeService,
+        decisionService,
+      ),
+      decisionService,
     );
   });
 

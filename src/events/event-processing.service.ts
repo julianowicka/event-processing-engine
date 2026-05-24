@@ -2,7 +2,6 @@ import { Injectable } from '@nestjs/common';
 import { SqliteService } from '../database/sqlite.service';
 import {
   OrderRow,
-  OrderStatus,
   ProcessJobOutcome,
   ProcessingJobRow,
   ValidOrderEvent,
@@ -11,14 +10,15 @@ import { EventAuditRepository } from './processing/event-audit.repository';
 import { EventDecisionService } from './processing/event-decision.service';
 import { EventJobRepository } from './processing/event-job.repository';
 import {
+  CreatedOrderApplication,
   DecisionDescription,
   FieldChangeSet,
   NextOrderState,
+  OrderEventApplicationResult,
 } from './processing/event-processing.types';
 import { EventValidationService } from './processing/event-validation.service';
-import { OrderMergeService } from './processing/order-merge.service';
+import { OrderEventApplicationService } from './processing/order-event-application.service';
 import { OrderRepository } from './processing/order.repository';
-import { OrderStateMachineService } from './processing/order-state-machine.service';
 
 @Injectable()
 export class EventProcessingService {
@@ -30,8 +30,7 @@ export class EventProcessingService {
     private readonly orderRepository: OrderRepository,
     private readonly auditRepository: EventAuditRepository,
     private readonly validationService: EventValidationService,
-    private readonly stateMachineService: OrderStateMachineService,
-    private readonly mergeService: OrderMergeService,
+    private readonly orderApplicationService: OrderEventApplicationService,
     private readonly decisionService: EventDecisionService,
   ) {}
 
@@ -83,51 +82,85 @@ export class EventProcessingService {
     const order = this.orderRepository.findOrder(event.orderId);
 
     if (!order && event.type !== 'ORDER_CREATED') {
-      this.deferJob(job, event, Date.now() - startedAt);
-      return { orderChanged: false };
-    }
-
-    switch (event.type) {
-      case 'ORDER_CREATED':
-        return this.processOrderCreated(job, event, order, startedAt);
-      case 'ORDER_UPDATED':
-        return this.processOrderUpdated(job, event, order!, startedAt);
-      case 'PAYMENT_CAPTURED':
-        return this.processPaymentCaptured(job, event, order!, startedAt);
-      case 'ORDER_CANCELLED':
-        return this.processOrderCancelled(job, event, order!, startedAt);
-      case 'REFUND_ISSUED':
-        return this.processRefundIssued(job, event, order!, startedAt);
-    }
-  }
-
-  private processOrderCreated(
-    job: ProcessingJobRow,
-    event: ValidOrderEvent,
-    existingOrder: OrderRow | null,
-    startedAt: number,
-  ): ProcessJobOutcome {
-    if (existingOrder) {
-      this.finishWithDecisionDescription(
+      this.finishDeferredJob(
         job,
         event,
-        this.decisionService.orderAlreadyExists(event),
+        this.decisionService.orderNotReady(event),
         Date.now() - startedAt,
       );
       return { orderChanged: false };
     }
 
-    const amountMinor = this.validationService.optionalMoneyToMinor(
-      event.payload.amount,
-    );
-    const currency = this.validationService.optionalCurrency(
-      event.payload.currency,
-    );
+    const result = this.orderApplicationService.apply(event, {
+      order,
+      canApplyField: (fieldName) =>
+        this.orderRepository.canApplyField(event.orderId, fieldName, event),
+      hasPendingPaymentForOrder: () =>
+        this.jobRepository.hasPendingPaymentForOrder(
+          event.orderId,
+          event.timestamp,
+        ),
+    });
 
-    this.orderRepository.createOrder(event, amountMinor, currency);
+    return this.finishApplicationResult(job, event, result, startedAt);
+  }
+
+  private finishApplicationResult(
+    job: ProcessingJobRow,
+    event: ValidOrderEvent,
+    result: OrderEventApplicationResult,
+    startedAt: number,
+  ): ProcessJobOutcome {
+    switch (result.kind) {
+      case 'CREATED':
+        return this.finishOrderCreated(
+          job,
+          event,
+          result.createdOrder,
+          startedAt,
+        );
+      case 'MUTATION':
+        return this.finishStateMutation(
+          job,
+          event,
+          result.order,
+          result.nextState,
+          result.fields,
+          startedAt,
+        );
+      case 'REJECTED':
+        this.finishWithDecisionDescription(
+          job,
+          event,
+          result.decision,
+          Date.now() - startedAt,
+        );
+        return { orderChanged: false };
+      case 'DEFERRED':
+        this.finishDeferredJob(
+          job,
+          event,
+          result.decision,
+          Date.now() - startedAt,
+        );
+        return { orderChanged: false };
+    }
+  }
+
+  private finishOrderCreated(
+    job: ProcessingJobRow,
+    event: ValidOrderEvent,
+    createdOrder: CreatedOrderApplication,
+    startedAt: number,
+  ): ProcessJobOutcome {
+    this.orderRepository.createOrder(
+      event,
+      createdOrder.amountMinor,
+      createdOrder.currency,
+    );
     this.orderRepository.upsertFieldVersion(event.orderId, 'status', event);
 
-    if (amountMinor !== null) {
+    if (createdOrder.amountMinor !== null) {
       this.orderRepository.upsertFieldVersion(
         event.orderId,
         'amountMinor',
@@ -135,21 +168,15 @@ export class EventProcessingService {
       );
     }
 
-    if (currency !== null) {
+    if (createdOrder.currency !== null) {
       this.orderRepository.upsertFieldVersion(event.orderId, 'currency', event);
     }
-
-    const changed = {
-      status: 'CREATED',
-      ...(amountMinor === null ? {} : { amountMinor }),
-      ...(currency === null ? {} : { currency }),
-    };
 
     this.auditRepository.writeHistory(
       event,
       null,
       'CREATED',
-      changed,
+      createdOrder.changedFields,
       {},
       'ACCEPTED',
       'APPLIED',
@@ -157,216 +184,12 @@ export class EventProcessingService {
     this.finishWithDecisionDescription(
       job,
       event,
-      this.decisionService.orderCreated(event, changed),
+      this.decisionService.orderCreated(event, createdOrder.changedFields),
       Date.now() - startedAt,
     );
     this.jobRepository.releaseDeferredJobsForOrder(event.orderId);
 
     return { orderChanged: true };
-  }
-
-  private processOrderUpdated(
-    job: ProcessingJobRow,
-    event: ValidOrderEvent,
-    order: OrderRow,
-    startedAt: number,
-  ): ProcessJobOutcome {
-    const mutation = this.mergeService.buildOrderUpdatedMutation(
-      event,
-      order,
-      (fieldName) =>
-        this.orderRepository.canApplyField(event.orderId, fieldName, event),
-    );
-
-    return this.finishStateMutation(
-      job,
-      event,
-      order,
-      mutation.nextState,
-      mutation.fields,
-      startedAt,
-    );
-  }
-
-  private processPaymentCaptured(
-    job: ProcessingJobRow,
-    event: ValidOrderEvent,
-    order: OrderRow,
-    startedAt: number,
-  ): ProcessJobOutcome {
-    const paymentAmount =
-      Object.prototype.hasOwnProperty.call(event.payload, 'amount') ||
-      order.amount_minor === null
-        ? this.validationService.positiveMoneyToMinor(event.payload.amount)
-        : order.amount_minor;
-
-    if (paymentAmount === null || paymentAmount <= 0) {
-      this.finishWithDecisionDescription(
-        job,
-        event,
-        this.decisionService.paymentAmountRequired(),
-        Date.now() - startedAt,
-      );
-      return { orderChanged: false };
-    }
-
-    if (order.paid_amount_minor > 0) {
-      this.finishWithDecisionDescription(
-        job,
-        event,
-        this.decisionService.paymentAlreadyCaptured(event),
-        Date.now() - startedAt,
-      );
-      return { orderChanged: false };
-    }
-
-    if (!this.stateMachineService.canTransition(order.status, 'PAID')) {
-      this.finishWithDecisionDescription(
-        job,
-        event,
-        this.decisionService.forbiddenPayment(event, order),
-        Date.now() - startedAt,
-      );
-      return { orderChanged: false };
-    }
-
-    return this.finishStateMutation(
-      job,
-      event,
-      order,
-      {
-        status: 'PAID',
-        amountMinor: order.amount_minor,
-        currency: order.currency,
-        paidAmountMinor: paymentAmount,
-        refundedAmountMinor: order.refunded_amount_minor,
-      },
-      {
-        changed: { status: 'PAID', paidAmountMinor: paymentAmount },
-        skipped: {},
-      },
-      startedAt,
-    );
-  }
-
-  private processOrderCancelled(
-    job: ProcessingJobRow,
-    event: ValidOrderEvent,
-    order: OrderRow,
-    startedAt: number,
-  ): ProcessJobOutcome {
-    if (!this.stateMachineService.canTransition(order.status, 'CANCELLED')) {
-      this.finishWithDecisionDescription(
-        job,
-        event,
-        this.decisionService.forbiddenCancellation(event, order),
-        Date.now() - startedAt,
-      );
-      return { orderChanged: false };
-    }
-
-    return this.finishStateMutation(
-      job,
-      event,
-      order,
-      {
-        status: 'CANCELLED',
-        amountMinor: order.amount_minor,
-        currency: order.currency,
-        paidAmountMinor: order.paid_amount_minor,
-        refundedAmountMinor: order.refunded_amount_minor,
-      },
-      {
-        changed: { status: 'CANCELLED' },
-        skipped: {},
-      },
-      startedAt,
-    );
-  }
-
-  private processRefundIssued(
-    job: ProcessingJobRow,
-    event: ValidOrderEvent,
-    order: OrderRow,
-    startedAt: number,
-  ): ProcessJobOutcome {
-    const amountValue = Object.prototype.hasOwnProperty.call(
-      event.payload,
-      'refundAmount',
-    )
-      ? event.payload.refundAmount
-      : event.payload.amount;
-    const refundAmount =
-      this.validationService.positiveMoneyToMinor(amountValue);
-
-    if (refundAmount === null || refundAmount <= 0) {
-      this.finishWithDecisionDescription(
-        job,
-        event,
-        this.decisionService.refundAmountRequired(),
-        Date.now() - startedAt,
-      );
-      return { orderChanged: false };
-    }
-
-    if (
-      order.status === 'CREATED' &&
-      this.jobRepository.hasPendingPaymentForOrder(
-        event.orderId,
-        event.timestamp,
-      )
-    ) {
-      this.deferJob(job, event, Date.now() - startedAt);
-      return { orderChanged: false };
-    }
-
-    if (order.status !== 'PAID' && order.status !== 'PARTIALLY_REFUNDED') {
-      this.finishWithDecisionDescription(
-        job,
-        event,
-        this.decisionService.forbiddenRefund(event, order),
-        Date.now() - startedAt,
-      );
-      return { orderChanged: false };
-    }
-
-    const nextRefundedAmount = order.refunded_amount_minor + refundAmount;
-
-    if (nextRefundedAmount > order.paid_amount_minor) {
-      this.finishWithDecisionDescription(
-        job,
-        event,
-        this.decisionService.refundExceedsCaptured(event),
-        Date.now() - startedAt,
-      );
-      return { orderChanged: false };
-    }
-
-    const nextStatus: OrderStatus =
-      nextRefundedAmount === order.paid_amount_minor
-        ? 'REFUNDED'
-        : 'PARTIALLY_REFUNDED';
-
-    return this.finishStateMutation(
-      job,
-      event,
-      order,
-      {
-        status: nextStatus,
-        amountMinor: order.amount_minor,
-        currency: order.currency,
-        paidAmountMinor: order.paid_amount_minor,
-        refundedAmountMinor: nextRefundedAmount,
-      },
-      {
-        changed: {
-          status: nextStatus,
-          refundedAmountMinor: nextRefundedAmount,
-        },
-        skipped: {},
-      },
-      startedAt,
-    );
   }
 
   private finishStateMutation(
@@ -449,12 +272,12 @@ export class EventProcessingService {
     }
   }
 
-  private deferJob(
+  private finishDeferredJob(
     job: ProcessingJobRow,
     event: ValidOrderEvent,
+    decision: DecisionDescription,
     processingTimeMs: number,
   ): void {
-    const decision = this.decisionService.orderNotReady(event);
     const result = this.auditRepository.writeDecision({
       job,
       event,
