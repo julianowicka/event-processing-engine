@@ -3,6 +3,7 @@ import type {
   JobStatus,
   OrderStatus,
 } from '../events/event.types';
+import type { JsonObject } from '../common/json.types';
 
 export interface OrderCurrentState {
   orderId: string;
@@ -26,8 +27,8 @@ export interface OrderHistoryEntry {
   processedAt: string;
   fromStatus: OrderStatus | null;
   toStatus: OrderStatus;
-  changedFields: Record<string, unknown>;
-  skippedFields: Record<string, unknown>;
+  changedFields: JsonObject;
+  skippedFields: JsonObject;
   decision: 'ACCEPTED' | 'PARTIALLY_APPLIED';
   reasonCode: string;
   createdAt: string;
@@ -44,7 +45,7 @@ export interface OrderDecisionEntry {
   decision: EngineDecision;
   reasonCode: string;
   reasonMessage: string;
-  details: Record<string, unknown>;
+  details: JsonObject;
   processingTimeMs: number;
   createdAt: string;
 }
