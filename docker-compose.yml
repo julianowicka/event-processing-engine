@@ -2,7 +2,10 @@ services:
   api:
     build:
       context: .
+    env_file:
+      - .env
     environment:
+      NODE_ENV: production
       PORT: 3000
       SQLITE_DB_PATH: /data/app.sqlite
       EVENT_WORKER_VERBOSE_LOGS: ${EVENT_WORKER_VERBOSE_LOGS:-false}
