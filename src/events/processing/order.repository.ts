@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { DatabaseSync as DatabaseSyncInstance } from 'node:sqlite';
+import { asSqliteRow } from '../../database/sqlite-row.util';
 import { SqliteService } from '../../database/sqlite.service';
 import type {
   OrderRow,
@@ -127,9 +128,10 @@ export class OrderRepository {
   }
 
   findOrder(orderId: string): OrderRow | null {
-    const row = this.db
-      .prepare(
-        `
+    const row = asSqliteRow<OrderRow>(
+      this.db
+        .prepare(
+          `
           SELECT
             order_id,
             status,
@@ -145,8 +147,9 @@ export class OrderRepository {
           FROM orders
           WHERE order_id = ?
         `,
-      )
-      .get(orderId) as unknown as OrderRow | undefined;
+        )
+        .get(orderId),
+    );
 
     return row ?? null;
   }

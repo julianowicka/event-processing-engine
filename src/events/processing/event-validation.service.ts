@@ -1,4 +1,6 @@
 import { Injectable } from '@nestjs/common';
+import type { JsonObject, JsonValue } from '../../common/json.types';
+import { isJsonObject, parseJsonValue } from '../../common/json.util';
 import {
   OrderStatus,
   orderStatuses,
@@ -12,9 +14,9 @@ import type { EventValidationResult } from './event-processing.types';
 @Injectable()
 export class EventValidationService {
   validateRawEvent(job: ProcessingJobRow): EventValidationResult {
-    const raw = JSON.parse(job.raw_event_json) as unknown;
+    const raw = parseJsonValue(job.raw_event_json);
 
-    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    if (!isJsonObject(raw)) {
       return {
         valid: false,
         reasonCode: 'INVALID_SCHEMA',
@@ -22,7 +24,7 @@ export class EventValidationService {
       };
     }
 
-    const record = raw as Record<string, unknown>;
+    const record = raw;
     const eventId = this.readRequiredString(record.eventId);
     const orderId = this.readRequiredString(record.orderId);
     const timestamp = this.readRequiredTimestamp(record.timestamp);
@@ -86,7 +88,7 @@ export class EventValidationService {
     };
   }
 
-  readOrderStatus(value: unknown): OrderStatus {
+  readOrderStatus(value: JsonValue | undefined): OrderStatus {
     if (
       typeof value !== 'string' ||
       !orderStatuses.includes(value as OrderStatus)
@@ -97,7 +99,7 @@ export class EventValidationService {
     return value as OrderStatus;
   }
 
-  optionalCurrency(value: unknown): string | null {
+  optionalCurrency(value: JsonValue | undefined): string | null {
     if (value === undefined || value === null) {
       return null;
     }
@@ -109,7 +111,7 @@ export class EventValidationService {
     return value;
   }
 
-  optionalMoneyToMinor(value: unknown): number | null {
+  optionalMoneyToMinor(value: JsonValue | undefined): number | null {
     if (value === undefined || value === null) {
       return null;
     }
@@ -127,7 +129,7 @@ export class EventValidationService {
     return minor;
   }
 
-  positiveMoneyToMinor(value: unknown): number | null {
+  positiveMoneyToMinor(value: JsonValue | undefined): number | null {
     try {
       const minor = this.optionalMoneyToMinor(value);
       return minor !== null && minor > 0 ? minor : null;
@@ -170,20 +172,20 @@ export class EventValidationService {
   }
 
   private readPayload(
-    value: unknown,
-  ): { valid: true; value: Record<string, unknown> } | { valid: false } {
+    value: JsonValue | undefined,
+  ): { valid: true; value: JsonObject } | { valid: false } {
     if (value === undefined) {
       return { valid: true, value: {} };
     }
 
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    if (!isJsonObject(value)) {
       return { valid: false };
     }
 
-    return { valid: true, value: value as Record<string, unknown> };
+    return { valid: true, value };
   }
 
-  private readRequiredString(value: unknown): string | null {
+  private readRequiredString(value: JsonValue | undefined): string | null {
     if (typeof value !== 'string') {
       return null;
     }
@@ -192,7 +194,7 @@ export class EventValidationService {
     return trimmed.length === 0 ? null : trimmed;
   }
 
-  private readRequiredTimestamp(value: unknown): number | null {
+  private readRequiredTimestamp(value: JsonValue | undefined): number | null {
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
   }
 }

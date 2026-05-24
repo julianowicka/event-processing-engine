@@ -1,5 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { DatabaseSync as DatabaseSyncInstance } from 'node:sqlite';
+import { parseJsonObject } from '../common/json.util';
+import { asSqliteRow, asSqliteRows } from '../database/sqlite-row.util';
 import { SqliteService } from '../database/sqlite.service';
 import type {
   EngineDecision,
@@ -103,9 +105,10 @@ export class OrdersService {
   }
 
   private findCurrentState(orderId: string): OrderCurrentState | null {
-    const row = this.db
-      .prepare(
-        `
+    const row = asSqliteRow<OrderRow>(
+      this.db
+        .prepare(
+          `
           SELECT
             order_id,
             status,
@@ -121,8 +124,9 @@ export class OrdersService {
           FROM orders
           WHERE order_id = ?
         `,
-      )
-      .get(orderId) as unknown as OrderRow | undefined;
+        )
+        .get(orderId),
+    );
 
     if (!row) {
       return null;
@@ -144,7 +148,7 @@ export class OrdersService {
   }
 
   private readHistory(orderId: string): OrderHistoryEntry[] {
-    return (
+    return asSqliteRows<OrderHistoryRow>(
       this.db
         .prepare(
           `
@@ -166,7 +170,7 @@ export class OrdersService {
             ORDER BY id ASC
           `,
         )
-        .all(orderId) as unknown as OrderHistoryRow[]
+        .all(orderId),
     ).map((row) => ({
       id: row.id,
       eventId: row.event_id,
@@ -175,8 +179,8 @@ export class OrdersService {
       processedAt: row.processed_at,
       fromStatus: row.from_status,
       toStatus: row.to_status,
-      changedFields: this.parseObject(row.changed_fields_json),
-      skippedFields: this.parseObject(row.skipped_fields_json),
+      changedFields: parseJsonObject(row.changed_fields_json),
+      skippedFields: parseJsonObject(row.skipped_fields_json),
       decision: row.decision,
       reasonCode: row.reason_code,
       createdAt: row.created_at,
@@ -184,7 +188,7 @@ export class OrdersService {
   }
 
   private readAuditLog(orderId: string): OrderDecisionEntry[] {
-    return (
+    return asSqliteRows<DecisionRow>(
       this.db
         .prepare(
           `
@@ -207,12 +211,12 @@ export class OrdersService {
             ORDER BY id ASC
           `,
         )
-        .all(orderId) as unknown as DecisionRow[]
+        .all(orderId),
     ).map((row) => this.mapDecision(row));
   }
 
   private readPendingJobs(orderId: string): OrderPendingJob[] {
-    return (
+    return asSqliteRows<PendingJobRow>(
       this.db
         .prepare(
           `
@@ -250,7 +254,7 @@ export class OrdersService {
             ORDER BY jobs.id ASC
           `,
         )
-        .all(orderId) as unknown as PendingJobRow[]
+        .all(orderId),
     ).map((row) => ({
       id: row.id,
       rawIncomingEventId: row.raw_incoming_event_id,
@@ -297,19 +301,9 @@ export class OrdersService {
       decision: row.decision,
       reasonCode: row.reason_code,
       reasonMessage: row.reason_message,
-      details: this.parseObject(row.details_json),
+      details: parseJsonObject(row.details_json),
       processingTimeMs: row.processing_time_ms,
       createdAt: row.created_at,
     };
-  }
-
-  private parseObject(json: string): Record<string, unknown> {
-    const value = JSON.parse(json) as unknown;
-
-    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-      return value as Record<string, unknown>;
-    }
-
-    return {};
   }
 }

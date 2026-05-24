@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { JsonObject } from '../../common/json.types';
 import type {
   EngineDecision,
   OrderRow,
@@ -15,7 +16,7 @@ export class EventDecisionService {
   invalidEvent(
     reasonCode: ReasonCode,
     reasonMessage: string,
-    details?: Record<string, unknown>,
+    details?: JsonObject,
   ): DecisionDescription {
     return {
       decision: 'REJECTED',
@@ -43,7 +44,7 @@ export class EventDecisionService {
 
   orderCreated(
     event: ValidOrderEvent,
-    changedFields: Record<string, unknown>,
+    changedFields: JsonObject,
   ): DecisionDescription {
     return {
       decision: 'ACCEPTED',

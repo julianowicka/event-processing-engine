@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { DatabaseSync as DatabaseSyncInstance } from 'node:sqlite';
+import { asSqliteRow } from '../database/sqlite-row.util';
 import { SqliteService } from '../database/sqlite.service';
 import type { EngineStats, StatsRow } from './stats.types';
 
@@ -12,9 +13,10 @@ export class StatsService {
   }
 
   getStats(): EngineStats {
-    const row = this.db
-      .prepare(
-        `
+    const row = asSqliteRow<StatsRow>(
+      this.db
+        .prepare(
+          `
           SELECT
             valid_events_count,
             accepted_events_count,
@@ -27,8 +29,13 @@ export class StatsService {
           FROM stats
           WHERE id = 1
         `,
-      )
-      .get() as unknown as StatsRow;
+        )
+        .get(),
+    );
+
+    if (!row) {
+      throw new Error('Stats row was not initialized');
+    }
 
     const rawDeliveriesCount = this.readCount('raw_incoming_events');
     const queuedJobsCount = this.readCount('event_processing_jobs');

@@ -1,3 +1,4 @@
+import type { JsonObject } from '../../common/json.types';
 import type {
   EngineDecision,
   OrderRow,
@@ -13,7 +14,7 @@ export interface DecisionInput {
   decision: EngineDecision;
   reasonCode: ReasonCode;
   reasonMessage: string;
-  details?: Record<string, unknown>;
+  details?: JsonObject;
   processingTimeMs: number;
 }
 
@@ -25,12 +26,12 @@ export interface DecisionDescription {
   decision: EngineDecision;
   reasonCode: ReasonCode;
   reasonMessage: string;
-  details?: Record<string, unknown>;
+  details?: JsonObject;
 }
 
 export interface FieldChangeSet {
-  changed: Record<string, unknown>;
-  skipped: Record<string, unknown>;
+  changed: JsonObject;
+  skipped: JsonObject;
 }
 
 export interface NextOrderState {
@@ -41,7 +42,7 @@ export interface NextOrderState {
   refundedAmountMinor: number;
 }
 
-export interface OrderEventApplicationContext {
+export interface OrderEventStateMachineContext {
   order: OrderRow | null;
   canApplyField(fieldName: string): boolean;
   hasPendingPaymentForOrder(): boolean;
@@ -50,10 +51,10 @@ export interface OrderEventApplicationContext {
 export interface CreatedOrderApplication {
   amountMinor: number | null;
   currency: string | null;
-  changedFields: Record<string, unknown>;
+  changedFields: JsonObject;
 }
 
-export type OrderEventApplicationResult =
+export type OrderEventStateMachineResult =
   | {
       kind: 'CREATED';
       createdOrder: CreatedOrderApplication;
@@ -79,5 +80,5 @@ export type EventValidationResult =
       valid: false;
       reasonCode: ReasonCode;
       reasonMessage: string;
-      details?: Record<string, unknown>;
+      details?: JsonObject;
     };

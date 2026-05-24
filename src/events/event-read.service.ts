@@ -1,5 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { DatabaseSync as DatabaseSyncInstance } from 'node:sqlite';
+import { parseJsonObject, parseJsonValue } from '../common/json.util';
+import { asSqliteRows } from '../database/sqlite-row.util';
 import { SqliteService } from '../database/sqlite.service';
 import type {
   EngineDecision,
@@ -106,7 +108,7 @@ export class EventReadService {
   }
 
   private readDeliveries(eventId: string): EventDeliveryDetails[] {
-    return (
+    return asSqliteRows<EventDeliveryRow>(
       this.db
         .prepare(
           `
@@ -148,7 +150,7 @@ export class EventReadService {
             ORDER BY raw.id ASC
           `,
         )
-        .all(eventId) as unknown as EventDeliveryRow[]
+        .all(eventId),
     ).map((row) => ({
       rawIncomingEventId: row.raw_incoming_event_id,
       eventId: row.event_id,
@@ -157,8 +159,8 @@ export class EventReadService {
       timestamp: row.event_timestamp,
       receivedAt: row.received_at,
       payload:
-        row.payload_json === null ? null : this.parseObject(row.payload_json),
-      rawEvent: JSON.parse(row.raw_event_json) as unknown,
+        row.payload_json === null ? null : parseJsonObject(row.payload_json),
+      rawEvent: parseJsonValue(row.raw_event_json),
       processingJob:
         row.job_id === null
           ? null
@@ -195,7 +197,7 @@ export class EventReadService {
   }
 
   private readDecisions(eventId: string): EventDecisionDetails[] {
-    return (
+    return asSqliteRows<EventDecisionRow>(
       this.db
         .prepare(
           `
@@ -218,12 +220,12 @@ export class EventReadService {
             ORDER BY id ASC
           `,
         )
-        .all(eventId) as unknown as EventDecisionRow[]
+        .all(eventId),
     ).map((row) => this.mapDecision(row));
   }
 
   private readHistory(eventId: string): EventHistoryDetails[] {
-    return (
+    return asSqliteRows<EventHistoryRow>(
       this.db
         .prepare(
           `
@@ -246,7 +248,7 @@ export class EventReadService {
             ORDER BY id ASC
           `,
         )
-        .all(eventId) as unknown as EventHistoryRow[]
+        .all(eventId),
     ).map((row) => ({
       id: row.id,
       orderId: row.order_id,
@@ -256,8 +258,8 @@ export class EventReadService {
       processedAt: row.processed_at,
       fromStatus: row.from_status,
       toStatus: row.to_status,
-      changedFields: this.parseObject(row.changed_fields_json),
-      skippedFields: this.parseObject(row.skipped_fields_json),
+      changedFields: parseJsonObject(row.changed_fields_json),
+      skippedFields: parseJsonObject(row.skipped_fields_json),
       decision: row.decision,
       reasonCode: row.reason_code,
       createdAt: row.created_at,
@@ -276,7 +278,7 @@ export class EventReadService {
       decision: row.decision,
       reasonCode: row.reason_code,
       reasonMessage: row.reason_message,
-      details: this.parseObject(row.details_json),
+      details: parseJsonObject(row.details_json),
       processingTimeMs: row.processing_time_ms,
       createdAt: row.created_at,
     };
@@ -296,15 +298,5 @@ export class EventReadService {
         ].filter((orderId): orderId is string => Boolean(orderId)),
       ),
     ];
-  }
-
-  private parseObject(json: string): Record<string, unknown> {
-    const value = JSON.parse(json) as unknown;
-
-    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-      return value as Record<string, unknown>;
-    }
-
-    return {};
   }
 }

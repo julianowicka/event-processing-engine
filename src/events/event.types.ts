@@ -1,31 +1,13 @@
-export interface EventProjection {
-  eventId: string | null;
-  orderId: string | null;
-  type: string | null;
-  timestamp: number | null;
-  payloadJson: string | null;
-  rawEventJson: string;
-}
+import type { JsonObject, JsonValue } from '../common/json.types';
 
-export interface QueuedEventResult {
-  incomingEventId: number;
-  processingJobId: number;
-  eventId: string | null;
-  orderId: string | null;
-  type: string | null;
-  status: 'QUEUED';
-  reasonCode: null;
-  reasonMessage: string;
-  processingTimeMs: 0;
-}
-
-export interface QueueEventsResponse {
-  mode: 'ASYNC_WORKER';
-  results: QueuedEventResult[];
-  summary: {
-    queued: number;
-  };
-}
+export type {
+  EventProjection,
+  QueuedEventRecord,
+  QueuedEventResult,
+  QueueEventsRequest,
+  QueueEventsResponse,
+  QueueEventInput,
+} from './events.types';
 
 export const supportedEventTypes = [
   'ORDER_CREATED',
@@ -93,7 +75,7 @@ export interface ValidOrderEvent {
   orderId: string;
   type: SupportedEventType;
   timestamp: number;
-  payload: Record<string, unknown>;
+  payload: JsonObject;
 }
 
 export interface OrderRow {
@@ -125,7 +107,7 @@ export interface EventDecisionDetails {
   decision: EngineDecision;
   reasonCode: ReasonCode;
   reasonMessage: string;
-  details: Record<string, unknown>;
+  details: JsonObject;
   processingTimeMs: number;
   createdAt: string;
 }
@@ -137,8 +119,8 @@ export interface EventDeliveryDetails {
   type: string | null;
   timestamp: number | null;
   receivedAt: string;
-  payload: Record<string, unknown> | null;
-  rawEvent: unknown;
+  payload: JsonObject | null;
+  rawEvent: JsonValue;
   processingJob: {
     id: number;
     status: JobStatus;
@@ -160,8 +142,8 @@ export interface EventHistoryDetails {
   processedAt: string;
   fromStatus: OrderStatus | null;
   toStatus: OrderStatus;
-  changedFields: Record<string, unknown>;
-  skippedFields: Record<string, unknown>;
+  changedFields: JsonObject;
+  skippedFields: JsonObject;
   decision: 'ACCEPTED' | 'PARTIALLY_APPLIED';
   reasonCode: string;
   createdAt: string;
