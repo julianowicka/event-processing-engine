@@ -1,0 +1,23 @@
+services:
+  api:
+    build:
+      context: .
+    environment:
+      PORT: 3000
+      SQLITE_DB_PATH: /data/app.sqlite
+      EVENT_WORKER_VERBOSE_LOGS: ${EVENT_WORKER_VERBOSE_LOGS:-false}
+    ports:
+      - '3100:3000'
+    volumes:
+      - sqlite-data:/data
+
+  frontend:
+    build:
+      context: ./frontend
+    depends_on:
+      - api
+    ports:
+      - '8080:80'
+
+volumes:
+  sqlite-data:

@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Event Engine Test Console</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Event Processing Engine</p>
+          <h1>Test Console</h1>
+        </div>
+        <button class="ghost-button" id="refreshButton" type="button">
+          Refresh Stats
+        </button>
+      </header>
+
+      <section class="metrics" aria-label="Processing statistics">
+        <div>
+          <span class="metric-value" id="rawDeliveriesCount">0</span>
+          <span class="metric-label">Raw deliveries</span>
+        </div>
+        <div>
+          <span class="metric-value" id="queuedJobsCount">0</span>
+          <span class="metric-label">Queued jobs</span>
+        </div>
+        <div>
+          <span class="metric-value" id="pendingEventsCount">0</span>
+          <span class="metric-label">Pending</span>
+        </div>
+        <div>
+          <span class="metric-value" id="processedEventsCount">0</span>
+          <span class="metric-label">Processed</span>
+        </div>
+        <div>
+          <span class="metric-value" id="rejectedEventsCount">0</span>
+          <span class="metric-label">Rejected</span>
+        </div>
+        <div>
+          <span class="metric-value" id="duplicateEventsCount">0</span>
+          <span class="metric-label">Duplicates</span>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <aside class="scenario-panel">
+          <div class="panel-heading">
+            <h2>Scenarios</h2>
+          </div>
+          <div class="scenario-list">
+            <button
+              class="scenario-button active"
+              type="button"
+              data-scenario="stress"
+            >
+              <strong>Valid stress</strong>
+              <span>Out-of-order delivery, partial merge, duplicate</span>
+            </button>
+            <button
+              class="scenario-button"
+              type="button"
+              data-scenario="ordering"
+            >
+              <strong>Out of order</strong>
+              <span>Payment and refund before creation</span>
+            </button>
+            <button
+              class="scenario-button"
+              type="button"
+              data-scenario="malformed"
+            >
+              <strong>Malformed batch</strong>
+              <span>Invalid schemas and unsupported type</span>
+            </button>
+            <button
+              class="scenario-button"
+              type="button"
+              data-scenario="transitions"
+            >
+              <strong>Forbidden states</strong>
+              <span>Cancelled, paid, refunded conflicts</span>
+            </button>
+            <button
+              class="scenario-button"
+              type="button"
+              data-scenario="duplicate"
+            >
+              <strong>Duplicate replay</strong>
+              <span>Same eventId delivered twice</span>
+            </button>
+            <button
+              class="scenario-button"
+              type="button"
+              data-scenario="partial"
+            >
+              <strong>Partial merge</strong>
+              <span>Older amount skipped, newer currency applied</span>
+            </button>
+            <button
+              class="scenario-button"
+              type="button"
+              data-scenario="refund"
+            >
+              <strong>Refund flow</strong>
+              <span>Created, paid, partial and final refund</span>
+            </button>
+            <button
+              class="scenario-button"
+              type="button"
+              data-scenario="guards"
+            >
+              <strong>Payment guards</strong>
+              <span>Second payment and oversized refund rejected</span>
+            </button>
+            <button
+              class="scenario-button"
+              type="button"
+              data-scenario="invalid"
+            >
+              <strong>Invalid request</strong>
+              <span>Not an array, should return 400</span>
+            </button>
+          </div>
+        </aside>
+
+        <section class="editor-panel">
+          <div class="panel-heading split">
+            <h2>Batch JSON</h2>
+            <div class="actions">
+              <button
+                class="ghost-button compact"
+                id="formatButton"
+                type="button"
+              >
+                Format
+              </button>
+              <button
+                class="primary-button compact"
+                id="sendButton"
+                type="button"
+              >
+                Send Batch
+              </button>
+            </div>
+          </div>
+          <textarea
+            id="eventPayload"
+            spellcheck="false"
+            aria-label="Event batch JSON"
+          ></textarea>
+          <p class="message" id="message" aria-live="polite"></p>
+        </section>
+
+        <section class="result-panel">
+          <div class="panel-heading split">
+            <h2>Queued Results</h2>
+            <span class="small-status" id="lastRunStatus">Idle</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Raw</th>
+                  <th>Job</th>
+                  <th>Event</th>
+                  <th>Order</th>
+                  <th>Type</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="resultsTable"></tbody>
+            </table>
+          </div>
+          <p class="empty-state" id="emptyResults">No batch sent yet.</p>
+        </section>
+
+        <section class="response-panel">
+          <div class="panel-heading">
+            <h2>Raw Response</h2>
+          </div>
+          <pre id="responseOutput">{}</pre>
+        </section>
+
+        <section class="inspector-panel">
+          <div class="panel-heading split">
+            <h2>Event Inspector</h2>
+            <div class="lookup-actions">
+              <input
+                id="eventLookupInput"
+                type="text"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="eventId"
+                aria-label="Event ID"
+              />
+              <button
+                class="ghost-button compact"
+                id="inspectFirstButton"
+                type="button"
+              >
+                First queued
+              </button>
+              <button
+                class="primary-button compact"
+                id="inspectEventButton"
+                type="button"
+              >
+                Inspect
+              </button>
+            </div>
+          </div>
+          <div class="inspector-grid">
+            <div class="event-summary" id="eventSummary">
+              <span>Choose or send an event.</span>
+            </div>
+            <div class="event-section">
+              <div class="section-heading">
+                <h3>Deliveries</h3>
+              </div>
+              <div class="table-wrap compact-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Raw</th>
+                      <th>Job</th>
+                      <th>Status</th>
+                      <th>Decision</th>
+                      <th>Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody id="eventDeliveriesTable"></tbody>
+                </table>
+              </div>
+              <p class="empty-state" id="emptyEventDeliveries">
+                No event loaded.
+              </p>
+            </div>
+            <div class="event-section">
+              <div class="section-heading">
+                <h3>History</h3>
+              </div>
+              <div class="table-wrap compact-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Order</th>
+                      <th>Type</th>
+                      <th>From</th>
+                      <th>To</th>
+                      <th>Changed</th>
+                    </tr>
+                  </thead>
+                  <tbody id="eventHistoryTable"></tbody>
+                </table>
+              </div>
+              <p class="empty-state" id="emptyEventHistory">
+                No history rows for this event.
+              </p>
+            </div>
+            <div class="event-section event-audit">
+              <div class="section-heading">
+                <h3>Decisions</h3>
+              </div>
+              <div class="table-wrap compact-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Decision</th>
+                      <th>Reason</th>
+                      <th>Message</th>
+                    </tr>
+                  </thead>
+                  <tbody id="eventDecisionsTable"></tbody>
+                </table>
+              </div>
+              <p class="empty-state" id="emptyEventDecisions">
+                No decisions for this event.
+              </p>
+            </div>
+            <pre id="eventInspectorOutput">{}</pre>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="./app.js?v=event-inspector-1"></script>
+  </body>
+</html>
