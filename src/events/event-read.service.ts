@@ -10,6 +10,7 @@ import type {
   EventDetailsResponse,
   EventHistoryDetails,
   JobStatus,
+  OrderHistoryDecision,
   OrderStatus,
   ReasonCode,
 } from './event.types';
@@ -72,7 +73,7 @@ interface EventHistoryRow {
   to_status: OrderStatus;
   changed_fields_json: string;
   skipped_fields_json: string;
-  decision: 'ACCEPTED' | 'PARTIALLY_APPLIED';
+  decision: OrderHistoryDecision;
   reason_code: string;
   created_at: string;
 }

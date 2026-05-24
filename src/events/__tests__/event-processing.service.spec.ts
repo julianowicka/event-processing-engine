@@ -4,11 +4,23 @@ import * as path from 'node:path';
 import type { JsonObject } from '../../common/json.types';
 import { SqliteService } from '../../database/sqlite.service';
 import { EventProcessingService } from '../event-processing.service';
+import {
+  EngineDecision,
+  JobStatus,
+  ReasonCode,
+  SupportedEventType,
+} from '../event.types';
 import { EventAuditRepository } from '../processing/event-audit.repository';
 import { EventDecisionService } from '../processing/event-decision.service';
+import { EventJobCompletionService } from '../processing/event-job-completion.service';
 import { EventJobRepository } from '../processing/event-job.repository';
 import { EventValidationService } from '../processing/event-validation.service';
 import { OrderRepository } from '../processing/order.repository';
+import { OrderCancelledEventHandler } from '../processing/state-machine/handlers/order-cancelled-event.handler';
+import { OrderCreatedEventHandler } from '../processing/state-machine/handlers/order-created-event.handler';
+import { OrderUpdatedEventHandler } from '../processing/state-machine/handlers/order-updated-event.handler';
+import { PaymentCapturedEventHandler } from '../processing/state-machine/handlers/payment-captured-event.handler';
+import { RefundIssuedEventHandler } from '../processing/state-machine/handlers/refund-issued-event.handler';
 import { OrderEventStateMachineService } from '../processing/state-machine/order-event-state-machine.service';
 import { OrderStatusTransitionRulesService } from '../processing/state-machine/order-status-transition-rules.service';
 import { OrderUpdatedEventFieldsService } from '../processing/state-machine/order-updated-event-fields.service';
@@ -33,19 +45,38 @@ describe('EventProcessingService payment and refund guards', () => {
       statusTransitionRules,
     );
     const decisionService = new EventDecisionService();
+    const jobRepository = new EventJobRepository(sqliteService);
+    const orderRepository = new OrderRepository(sqliteService);
+    const auditRepository = new EventAuditRepository(sqliteService);
     service = new EventProcessingService(
       sqliteService,
-      new EventJobRepository(sqliteService),
-      new OrderRepository(sqliteService),
-      new EventAuditRepository(sqliteService),
+      jobRepository,
+      orderRepository,
       validationService,
       new OrderEventStateMachineService(
-        validationService,
-        statusTransitionRules,
-        orderUpdatedEventFields,
-        decisionService,
+        new OrderCreatedEventHandler(validationService, decisionService),
+        new OrderUpdatedEventHandler(orderUpdatedEventFields, decisionService),
+        new PaymentCapturedEventHandler(
+          validationService,
+          statusTransitionRules,
+          decisionService,
+        ),
+        new OrderCancelledEventHandler(statusTransitionRules, decisionService),
+        new RefundIssuedEventHandler(
+          validationService,
+          statusTransitionRules,
+          decisionService,
+        ),
       ),
       decisionService,
+      new EventJobCompletionService(
+        sqliteService,
+        jobRepository,
+        orderRepository,
+        auditRepository,
+        validationService,
+        decisionService,
+      ),
     );
   });
 
@@ -65,28 +96,28 @@ describe('EventProcessingService payment and refund guards', () => {
     enqueue({
       eventId: 'evt-guards-001',
       orderId: 'ord-guards-001',
-      type: 'ORDER_CREATED',
+      type: SupportedEventType.OrderCreated,
       timestamp: 1710001000,
       payload: { amount: 50, currency: 'PLN' },
     });
     enqueue({
       eventId: 'evt-guards-002',
       orderId: 'ord-guards-001',
-      type: 'PAYMENT_CAPTURED',
+      type: SupportedEventType.PaymentCaptured,
       timestamp: 1710002000,
       payload: { amount: 50 },
     });
     enqueue({
       eventId: 'evt-guards-003',
       orderId: 'ord-guards-001',
-      type: 'PAYMENT_CAPTURED',
+      type: SupportedEventType.PaymentCaptured,
       timestamp: 1710003000,
       payload: { amount: 50 },
     });
     enqueue({
       eventId: 'evt-guards-004',
       orderId: 'ord-guards-001',
-      type: 'REFUND_ISSUED',
+      type: SupportedEventType.RefundIssued,
       timestamp: 1710004000,
       payload: { refundAmount: 60 },
     });
@@ -97,11 +128,11 @@ describe('EventProcessingService payment and refund guards', () => {
 
     expect(readRejectedReasonCounts()).toEqual([
       expect.objectContaining({
-        reason_code: 'PAYMENT_ALREADY_CAPTURED',
+        reason_code: ReasonCode.PaymentAlreadyCaptured,
         count: 1,
       }),
       expect.objectContaining({
-        reason_code: 'REFUND_EXCEEDS_CAPTURED',
+        reason_code: ReasonCode.RefundExceedsCaptured,
         count: 1,
       }),
     ]);
@@ -110,7 +141,7 @@ describe('EventProcessingService payment and refund guards', () => {
   function enqueue(eventItem: {
     eventId: string;
     orderId: string;
-    type: string;
+    type: SupportedEventType;
     timestamp: number;
     payload: JsonObject;
   }): void {
@@ -151,9 +182,9 @@ describe('EventProcessingService payment and refund guards', () => {
           created_at,
           updated_at
         )
-        VALUES (?, 'PENDING', ?, 0, ?, ?)
+        VALUES (?, ?, ?, 0, ?, ?)
       `,
-    ).run(Number(rawResult.lastInsertRowid), now, now, now);
+    ).run(Number(rawResult.lastInsertRowid), JobStatus.Pending, now, now, now);
   }
 
   function readRejectedReasonCounts(): Array<{
@@ -165,11 +196,14 @@ describe('EventProcessingService payment and refund guards', () => {
         `
           SELECT reason_code, COUNT(*) AS count
           FROM event_decisions
-          WHERE decision = 'REJECTED'
+          WHERE decision = ?
           GROUP BY reason_code
           ORDER BY reason_code
         `,
       )
-      .all() as Array<{ reason_code: string; count: number }>;
+      .all(EngineDecision.Rejected) as Array<{
+      reason_code: string;
+      count: number;
+    }>;
   }
 });

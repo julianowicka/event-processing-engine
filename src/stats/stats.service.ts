@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import type { DatabaseSync as DatabaseSyncInstance } from 'node:sqlite';
 import { asSqliteRow } from '../database/sqlite-row.util';
 import { SqliteService } from '../database/sqlite.service';
+import { JobStatus } from '../events/event.types';
 import type { EngineStats, StatsRow } from './stats.types';
 
 @Injectable()
@@ -39,7 +40,10 @@ export class StatsService {
 
     const rawDeliveriesCount = this.readCount('raw_incoming_events');
     const queuedJobsCount = this.readCount('event_processing_jobs');
-    const pendingEventsCount = this.readJobCount(['PENDING', 'DEFERRED']);
+    const pendingEventsCount = this.readJobCount([
+      JobStatus.Pending,
+      JobStatus.Deferred,
+    ]);
     const deadLetterEventsCount = this.readCount('dead_letter_events');
 
     return {
@@ -69,7 +73,7 @@ export class StatsService {
     return row.count;
   }
 
-  private readJobCount(statuses: string[]): number {
+  private readJobCount(statuses: JobStatus[]): number {
     const placeholders = statuses.map(() => '?').join(', ');
     const row = this.db
       .prepare(

@@ -3,6 +3,7 @@ import type {
   EngineDecision,
   OrderRow,
   OrderStatus,
+  OrderVersionedField,
   ProcessingJobRow,
   ReasonCode,
   ValidOrderEvent,
@@ -29,6 +30,14 @@ export interface DecisionDescription {
   details?: JsonObject;
 }
 
+export type AppliedDecisionDescription = DecisionDescription & {
+  decision: EngineDecision.Accepted | EngineDecision.PartiallyApplied;
+};
+
+export type StateMutationDecision =
+  | AppliedDecisionDescription
+  | (DecisionDescription & { decision: EngineDecision.Rejected });
+
 export interface FieldChangeSet {
   changed: JsonObject;
   skipped: JsonObject;
@@ -44,7 +53,7 @@ export interface NextOrderState {
 
 export interface OrderEventStateMachineContext {
   order: OrderRow | null;
-  canApplyField(fieldName: string): boolean;
+  canApplyField(fieldName: OrderVersionedField): boolean;
   hasPendingPaymentForOrder(): boolean;
 }
 
@@ -54,23 +63,32 @@ export interface CreatedOrderApplication {
   changedFields: JsonObject;
 }
 
+export enum OrderEventStateMachineResultKind {
+  Created = 'CREATED',
+  Mutation = 'MUTATION',
+  Rejected = 'REJECTED',
+  Deferred = 'DEFERRED',
+}
+
 export type OrderEventStateMachineResult =
   | {
-      kind: 'CREATED';
+      kind: OrderEventStateMachineResultKind.Created;
       createdOrder: CreatedOrderApplication;
+      decision: AppliedDecisionDescription;
     }
   | {
-      kind: 'MUTATION';
+      kind: OrderEventStateMachineResultKind.Mutation;
       order: OrderRow;
       nextState: NextOrderState;
       fields: FieldChangeSet;
+      decision: AppliedDecisionDescription;
     }
   | {
-      kind: 'REJECTED';
+      kind: OrderEventStateMachineResultKind.Rejected;
       decision: DecisionDescription;
     }
   | {
-      kind: 'DEFERRED';
+      kind: OrderEventStateMachineResultKind.Deferred;
       decision: DecisionDescription;
     };
 

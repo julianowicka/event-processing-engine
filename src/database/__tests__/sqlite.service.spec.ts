@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { SupportedEventType } from '../../events/event.types';
 import { SqliteService } from '../sqlite.service';
 
 describe('SqliteService', () => {
@@ -127,7 +128,7 @@ describe('SqliteService', () => {
         ).run(
           'evt-rollback',
           'ord-rollback',
-          'ORDER_CREATED',
+          SupportedEventType.OrderCreated,
           1710000000,
           '{}',
           '{}',

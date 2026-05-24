@@ -1,6 +1,7 @@
 import type {
   EngineDecision,
   JobStatus,
+  OrderHistoryDecision,
   OrderStatus,
 } from '../events/event.types';
 import type { JsonObject } from '../common/json.types';
@@ -29,7 +30,7 @@ export interface OrderHistoryEntry {
   toStatus: OrderStatus;
   changedFields: JsonObject;
   skippedFields: JsonObject;
-  decision: 'ACCEPTED' | 'PARTIALLY_APPLIED';
+  decision: OrderHistoryDecision;
   reasonCode: string;
   createdAt: string;
 }

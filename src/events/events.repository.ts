@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { DatabaseSync as DatabaseSyncInstance } from 'node:sqlite';
 import { SqliteService } from '../database/sqlite.service';
+import { JobStatus } from './event.types';
 import type { EventProjection, QueuedEventRecord } from './events.types';
 
 @Injectable()
@@ -56,10 +57,10 @@ export class EventsRepository {
             created_at,
             updated_at
           )
-          VALUES (?, 'PENDING', ?, 0, ?, ?)
+          VALUES (?, ?, ?, 0, ?, ?)
         `,
       )
-      .run(incomingEventId, now, now, now);
+      .run(incomingEventId, JobStatus.Pending, now, now, now);
 
     return {
       incomingEventId,

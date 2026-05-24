@@ -1,4 +1,10 @@
 import type { JsonObject } from '../../../../common/json.types';
+import {
+  OrderStatus,
+  OrderVersionedField,
+  ReasonCode,
+  SupportedEventType,
+} from '../../../event.types';
 import type { OrderRow, ValidOrderEvent } from '../../../event.types';
 import { EventValidationService } from '../../event-validation.service';
 import { OrderStatusTransitionRulesService } from '../order-status-transition-rules.service';
@@ -19,11 +25,11 @@ describe('OrderUpdatedEventFieldsService', () => {
         currency: 'EUR',
       }),
       order(),
-      (fieldName) => fieldName === 'currency',
+      (fieldName) => fieldName === OrderVersionedField.Currency,
     );
 
     expect(result.nextState).toMatchObject({
-      status: 'CREATED',
+      status: OrderStatus.Created,
       amountMinor: 10000,
       currency: 'EUR',
       paidAmountMinor: 0,
@@ -31,21 +37,21 @@ describe('OrderUpdatedEventFieldsService', () => {
     });
     expect(result.fields).toEqual({
       changed: { currency: 'EUR' },
-      skipped: { amountMinor: 'OBSOLETE_FIELD' },
+      skipped: { amountMinor: ReasonCode.ObsoleteField },
     });
   });
 
   it('skips status changes that fail the state machine', () => {
     const result = service.buildChangesFromOrderUpdatedEvent(
-      event({ status: 'PAID' }),
-      order({ status: 'CANCELLED' }),
+      event({ status: OrderStatus.Paid }),
+      order({ status: OrderStatus.Cancelled }),
       () => true,
     );
 
-    expect(result.nextState.status).toBe('CANCELLED');
+    expect(result.nextState.status).toBe(OrderStatus.Cancelled);
     expect(result.fields).toEqual({
       changed: {},
-      skipped: { status: 'FORBIDDEN_TRANSITION' },
+      skipped: { status: ReasonCode.ForbiddenTransition },
     });
   });
 
@@ -53,7 +59,7 @@ describe('OrderUpdatedEventFieldsService', () => {
     return {
       eventId: 'evt-merge-001',
       orderId: 'ord-merge-001',
-      type: 'ORDER_UPDATED',
+      type: SupportedEventType.OrderUpdated,
       timestamp: 1710002000,
       payload,
     };
@@ -62,7 +68,7 @@ describe('OrderUpdatedEventFieldsService', () => {
   function order(overrides: Partial<OrderRow> = {}): OrderRow {
     return {
       order_id: 'ord-merge-001',
-      status: 'CREATED',
+      status: OrderStatus.Created,
       amount_minor: 10000,
       currency: 'PLN',
       paid_amount_minor: 0,

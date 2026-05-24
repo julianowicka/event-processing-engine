@@ -1,38 +1,54 @@
 import { Injectable } from '@nestjs/common';
-import type { OrderStatus, SupportedEventType } from '../../event.types';
+import { OrderStatus, SupportedEventType } from '../../event.types';
 
-type ConceptualOrderStatus = 'NEW' | OrderStatus;
+export enum ConceptualOrderStatus {
+  New = 'NEW',
+}
+
+type TransitionOrderStatus = ConceptualOrderStatus | OrderStatus;
 type EventTransition = {
-  from: ConceptualOrderStatus;
+  from: TransitionOrderStatus;
   to: OrderStatus;
 };
 
 @Injectable()
 export class OrderStatusTransitionRulesService {
   private readonly allowedTransitions: Record<OrderStatus, OrderStatus[]> = {
-    CREATED: ['PAID', 'CANCELLED'],
-    PAID: ['PARTIALLY_REFUNDED', 'REFUNDED'],
-    CANCELLED: [],
-    PARTIALLY_REFUNDED: ['REFUNDED'],
-    REFUNDED: [],
+    [OrderStatus.Created]: [OrderStatus.Paid, OrderStatus.Cancelled],
+    [OrderStatus.Paid]: [OrderStatus.PartiallyRefunded, OrderStatus.Refunded],
+    [OrderStatus.Cancelled]: [],
+    [OrderStatus.PartiallyRefunded]: [OrderStatus.Refunded],
+    [OrderStatus.Refunded]: [],
   };
 
   private readonly eventTransitions: Partial<
     Record<SupportedEventType, EventTransition[]>
   > = {
-    ORDER_CREATED: [{ from: 'NEW', to: 'CREATED' }],
-    ORDER_UPDATED: [
-      { from: 'CREATED', to: 'PAID' },
-      { from: 'CREATED', to: 'CANCELLED' },
-      { from: 'PAID', to: 'REFUNDED' },
-      { from: 'PARTIALLY_REFUNDED', to: 'REFUNDED' },
+    [SupportedEventType.OrderCreated]: [
+      { from: ConceptualOrderStatus.New, to: OrderStatus.Created },
     ],
-    PAYMENT_CAPTURED: [{ from: 'CREATED', to: 'PAID' }],
-    ORDER_CANCELLED: [{ from: 'CREATED', to: 'CANCELLED' }],
-    REFUND_ISSUED: [
-      { from: 'PAID', to: 'PARTIALLY_REFUNDED' },
-      { from: 'PAID', to: 'REFUNDED' },
-      { from: 'PARTIALLY_REFUNDED', to: 'REFUNDED' },
+    [SupportedEventType.OrderUpdated]: [
+      { from: OrderStatus.Created, to: OrderStatus.Paid },
+      { from: OrderStatus.Created, to: OrderStatus.Cancelled },
+      { from: OrderStatus.Paid, to: OrderStatus.Refunded },
+      {
+        from: OrderStatus.PartiallyRefunded,
+        to: OrderStatus.Refunded,
+      },
+    ],
+    [SupportedEventType.PaymentCaptured]: [
+      { from: OrderStatus.Created, to: OrderStatus.Paid },
+    ],
+    [SupportedEventType.OrderCancelled]: [
+      { from: OrderStatus.Created, to: OrderStatus.Cancelled },
+    ],
+    [SupportedEventType.RefundIssued]: [
+      { from: OrderStatus.Paid, to: OrderStatus.PartiallyRefunded },
+      { from: OrderStatus.Paid, to: OrderStatus.Refunded },
+      {
+        from: OrderStatus.PartiallyRefunded,
+        to: OrderStatus.Refunded,
+      },
     ],
   };
 
@@ -46,7 +62,7 @@ export class OrderStatusTransitionRulesService {
 
   canEventChangeStatus(
     eventType: SupportedEventType,
-    from: ConceptualOrderStatus,
+    from: TransitionOrderStatus,
     to: OrderStatus,
   ): boolean {
     if (from === to) {

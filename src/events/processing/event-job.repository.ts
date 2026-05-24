@@ -3,7 +3,8 @@ import type { DatabaseSync as DatabaseSyncInstance } from 'node:sqlite';
 import { asSqliteRow } from '../../database/sqlite-row.util';
 import { SqliteService } from '../../database/sqlite.service';
 import { verboseLog } from '../event-verbose-logger';
-import type { ProcessingJobRow, ReasonCode } from '../event.types';
+import { JobStatus, ReasonCode, SupportedEventType } from '../event.types';
+import type { ProcessingJobRow } from '../event.types';
 
 @Injectable()
 export class EventJobRepository {
@@ -44,7 +45,7 @@ export class EventJobRepository {
               SELECT jobs.id
               FROM event_processing_jobs jobs
               JOIN raw_incoming_events raw ON raw.id = jobs.raw_incoming_event_id
-              WHERE jobs.status IN ('PENDING', 'DEFERRED')
+              WHERE jobs.status IN (?, ?)
                 AND jobs.available_at <= ?
                 AND (
                   jobs.locked_by IS NULL
@@ -57,9 +58,15 @@ export class EventJobRepository {
             RETURNING id
           `,
         )
-        .get(this.workerId, nowIso, nowIso, nowIso, staleBeforeIso) as
-        | { id: number }
-        | undefined;
+        .get(
+          this.workerId,
+          nowIso,
+          nowIso,
+          JobStatus.Pending,
+          JobStatus.Deferred,
+          nowIso,
+          staleBeforeIso,
+        ) as { id: number } | undefined;
 
       if (!claimed) {
         return null;
@@ -117,7 +124,7 @@ export class EventJobRepository {
         `
           UPDATE event_processing_jobs
           SET
-            status = 'DONE',
+            status = ?,
             last_decision_id = ?,
             last_reason_code = ?,
             locked_by = NULL,
@@ -128,6 +135,7 @@ export class EventJobRepository {
         `,
       )
       .run(
+        JobStatus.Done,
         decisionId,
         reasonCode,
         new Date().toISOString(),
@@ -147,10 +155,10 @@ export class EventJobRepository {
         `
           UPDATE event_processing_jobs
           SET
-            status = 'DEFERRED',
+            status = ?,
             available_at = ?,
             last_decision_id = ?,
-            last_reason_code = 'ORDER_NOT_READY',
+            last_reason_code = ?,
             locked_by = NULL,
             locked_at = NULL,
             updated_at = ?
@@ -159,8 +167,10 @@ export class EventJobRepository {
         `,
       )
       .run(
+        JobStatus.Deferred,
         availableAt,
         decisionId,
+        ReasonCode.OrderNotReady,
         now.toISOString(),
         job.job_id,
         this.workerId,
@@ -175,12 +185,18 @@ export class EventJobRepository {
           FROM event_processing_jobs jobs
           JOIN raw_incoming_events raw ON raw.id = jobs.raw_incoming_event_id
           WHERE raw.order_id = ?
-            AND raw.type = 'PAYMENT_CAPTURED'
+            AND raw.type = ?
             AND raw.event_timestamp <= ?
-            AND jobs.status IN ('PENDING', 'DEFERRED')
+            AND jobs.status IN (?, ?)
         `,
       )
-      .get(orderId, refundTimestamp) as { count: number };
+      .get(
+        orderId,
+        SupportedEventType.PaymentCaptured,
+        refundTimestamp,
+        JobStatus.Pending,
+        JobStatus.Deferred,
+      ) as { count: number };
 
     return row.count > 0;
   }
@@ -193,7 +209,7 @@ export class EventJobRepository {
         `
           UPDATE event_processing_jobs
           SET available_at = ?, updated_at = ?
-          WHERE status = 'DEFERRED'
+          WHERE status = ?
             AND locked_by IS NULL
             AND raw_incoming_event_id IN (
               SELECT id
@@ -202,7 +218,7 @@ export class EventJobRepository {
             )
         `,
       )
-      .run(now, now, orderId);
+      .run(now, now, JobStatus.Deferred, orderId);
   }
 
   scheduleTechnicalRetry(
@@ -217,7 +233,7 @@ export class EventJobRepository {
         `
           UPDATE event_processing_jobs
           SET
-            status = 'PENDING',
+            status = ?,
             attempts = ?,
             available_at = ?,
             last_error_message = ?,
@@ -229,6 +245,7 @@ export class EventJobRepository {
         `,
       )
       .run(
+        JobStatus.Pending,
         attempts,
         new Date(now.getTime() + this.retryDelayMs).toISOString(),
         errorMessage,
@@ -256,11 +273,11 @@ export class EventJobRepository {
         `
           UPDATE event_processing_jobs
           SET
-            status = 'DEAD_LETTERED',
+            status = ?,
             attempts = ?,
             last_error_message = ?,
             last_decision_id = ?,
-            last_reason_code = 'PROCESSING_ERROR',
+            last_reason_code = ?,
             locked_by = NULL,
             locked_at = NULL,
             updated_at = ?
@@ -269,9 +286,11 @@ export class EventJobRepository {
         `,
       )
       .run(
+        JobStatus.DeadLettered,
         attempts,
         errorMessage,
         decisionId,
+        ReasonCode.ProcessingError,
         new Date().toISOString(),
         job.job_id,
         this.workerId,

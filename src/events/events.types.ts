@@ -19,20 +19,28 @@ export interface QueuedEventRecord {
   projection: EventProjection;
 }
 
+export enum QueuedEventStatus {
+  Queued = 'QUEUED',
+}
+
+export enum QueueEventsMode {
+  AsyncWorker = 'ASYNC_WORKER',
+}
+
 export interface QueuedEventResult {
   incomingEventId: number;
   processingJobId: number;
   eventId: string | null;
   orderId: string | null;
   type: string | null;
-  status: 'QUEUED';
+  status: QueuedEventStatus;
   reasonCode: null;
   reasonMessage: string;
   processingTimeMs: 0;
 }
 
 export interface QueueEventsResponse {
-  mode: 'ASYNC_WORKER';
+  mode: QueueEventsMode;
   results: QueuedEventResult[];
   summary: {
     queued: number;

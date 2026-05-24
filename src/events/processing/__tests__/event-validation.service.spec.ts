@@ -1,6 +1,7 @@
 import type { JsonValue } from '../../../common/json.types';
 import { isJsonObject } from '../../../common/json.util';
 import { EventValidationService } from '../event-validation.service';
+import { JobStatus, ReasonCode, SupportedEventType } from '../../event.types';
 import type { ProcessingJobRow } from '../../event.types';
 
 describe('EventValidationService', () => {
@@ -10,7 +11,7 @@ describe('EventValidationService', () => {
     const job = jobFromRaw({
       eventId: 'evt-valid-001',
       orderId: 'ord-valid-001',
-      type: 'ORDER_CREATED',
+      type: SupportedEventType.OrderCreated,
       timestamp: 1710001000,
       payload: { amount: 19.99, currency: 'PLN' },
     });
@@ -22,7 +23,7 @@ describe('EventValidationService', () => {
       event: {
         eventId: 'evt-valid-001',
         orderId: 'ord-valid-001',
-        type: 'ORDER_CREATED',
+        type: SupportedEventType.OrderCreated,
         timestamp: 1710001000,
         payload: { amount: 19.99, currency: 'PLN' },
       },
@@ -35,7 +36,7 @@ describe('EventValidationService', () => {
     expect(service.validateRawEvent(jobFromRaw('not an object'))).toMatchObject(
       {
         valid: false,
-        reasonCode: 'INVALID_SCHEMA',
+        reasonCode: ReasonCode.InvalidSchema,
       },
     );
 
@@ -51,7 +52,7 @@ describe('EventValidationService', () => {
       ),
     ).toMatchObject({
       valid: false,
-      reasonCode: 'UNKNOWN_EVENT_TYPE',
+      reasonCode: ReasonCode.UnknownEventType,
     });
   });
 
@@ -61,7 +62,7 @@ describe('EventValidationService', () => {
     return {
       job_id: 1,
       raw_incoming_event_id: 1,
-      status: 'PENDING',
+      status: JobStatus.Pending,
       attempts: 0,
       locked_by: null,
       locked_at: null,

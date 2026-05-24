@@ -1,78 +1,123 @@
-import { OrderStatusTransitionRulesService } from '../order-status-transition-rules.service';
+import { OrderStatus, SupportedEventType } from '../../../event.types';
+import {
+  ConceptualOrderStatus,
+  OrderStatusTransitionRulesService,
+} from '../order-status-transition-rules.service';
 
 describe('OrderStatusTransitionRulesService', () => {
   const service = new OrderStatusTransitionRulesService();
 
   it('allows expected payment, cancellation and refund transitions', () => {
-    expect(service.canChangeStatus('CREATED', 'PAID')).toBe(true);
-    expect(service.canChangeStatus('CREATED', 'CANCELLED')).toBe(true);
-    expect(service.canChangeStatus('PAID', 'PARTIALLY_REFUNDED')).toBe(true);
-    expect(service.canChangeStatus('PAID', 'REFUNDED')).toBe(true);
-    expect(service.canChangeStatus('PARTIALLY_REFUNDED', 'REFUNDED')).toBe(
+    expect(service.canChangeStatus(OrderStatus.Created, OrderStatus.Paid)).toBe(
       true,
     );
+    expect(
+      service.canChangeStatus(OrderStatus.Created, OrderStatus.Cancelled),
+    ).toBe(true);
+    expect(
+      service.canChangeStatus(OrderStatus.Paid, OrderStatus.PartiallyRefunded),
+    ).toBe(true);
+    expect(
+      service.canChangeStatus(OrderStatus.Paid, OrderStatus.Refunded),
+    ).toBe(true);
+    expect(
+      service.canChangeStatus(
+        OrderStatus.PartiallyRefunded,
+        OrderStatus.Refunded,
+      ),
+    ).toBe(true);
   });
 
   it('rejects forbidden terminal-state transitions', () => {
-    expect(service.canChangeStatus('CANCELLED', 'PAID')).toBe(false);
-    expect(service.canChangeStatus('REFUNDED', 'PAID')).toBe(false);
-    expect(service.canChangeStatus('CANCELLED', 'REFUNDED')).toBe(false);
+    expect(
+      service.canChangeStatus(OrderStatus.Cancelled, OrderStatus.Paid),
+    ).toBe(false);
+    expect(
+      service.canChangeStatus(OrderStatus.Refunded, OrderStatus.Paid),
+    ).toBe(false);
+    expect(
+      service.canChangeStatus(OrderStatus.Cancelled, OrderStatus.Refunded),
+    ).toBe(false);
   });
 
   it('exposes allowed transitions without leaking internal arrays', () => {
-    const allowed = service.getAllowedStatusChanges('CREATED');
+    const allowed = service.getAllowedStatusChanges(OrderStatus.Created);
 
-    expect(allowed).toEqual(['PAID', 'CANCELLED']);
+    expect(allowed).toEqual([OrderStatus.Paid, OrderStatus.Cancelled]);
 
-    allowed.push('REFUNDED');
+    allowed.push(OrderStatus.Refunded);
 
-    expect(service.getAllowedStatusChanges('CREATED')).toEqual([
-      'PAID',
-      'CANCELLED',
+    expect(service.getAllowedStatusChanges(OrderStatus.Created)).toEqual([
+      OrderStatus.Paid,
+      OrderStatus.Cancelled,
     ]);
   });
 
   it('maps events to their allowed status transitions', () => {
     expect(
-      service.canEventChangeStatus('ORDER_CREATED', 'NEW', 'CREATED'),
-    ).toBe(true);
-    expect(
-      service.canEventChangeStatus('PAYMENT_CAPTURED', 'CREATED', 'PAID'),
-    ).toBe(true);
-    expect(
-      service.canEventChangeStatus('ORDER_CANCELLED', 'CREATED', 'CANCELLED'),
-    ).toBe(true);
-    expect(
       service.canEventChangeStatus(
-        'REFUND_ISSUED',
-        'PAID',
-        'PARTIALLY_REFUNDED',
+        SupportedEventType.OrderCreated,
+        ConceptualOrderStatus.New,
+        OrderStatus.Created,
       ),
     ).toBe(true);
     expect(
       service.canEventChangeStatus(
-        'REFUND_ISSUED',
-        'PARTIALLY_REFUNDED',
-        'REFUNDED',
+        SupportedEventType.PaymentCaptured,
+        OrderStatus.Created,
+        OrderStatus.Paid,
+      ),
+    ).toBe(true);
+    expect(
+      service.canEventChangeStatus(
+        SupportedEventType.OrderCancelled,
+        OrderStatus.Created,
+        OrderStatus.Cancelled,
+      ),
+    ).toBe(true);
+    expect(
+      service.canEventChangeStatus(
+        SupportedEventType.RefundIssued,
+        OrderStatus.Paid,
+        OrderStatus.PartiallyRefunded,
+      ),
+    ).toBe(true);
+    expect(
+      service.canEventChangeStatus(
+        SupportedEventType.RefundIssued,
+        OrderStatus.PartiallyRefunded,
+        OrderStatus.Refunded,
       ),
     ).toBe(true);
   });
 
   it('rejects event-specific forbidden transitions from the docs', () => {
     expect(
-      service.canEventChangeStatus('PAYMENT_CAPTURED', 'CANCELLED', 'PAID'),
-    ).toBe(false);
-    expect(
-      service.canEventChangeStatus('PAYMENT_CAPTURED', 'REFUNDED', 'PAID'),
-    ).toBe(false);
-    expect(
-      service.canEventChangeStatus('REFUND_ISSUED', 'CANCELLED', 'REFUNDED'),
+      service.canEventChangeStatus(
+        SupportedEventType.PaymentCaptured,
+        OrderStatus.Cancelled,
+        OrderStatus.Paid,
+      ),
     ).toBe(false);
     expect(
       service.canEventChangeStatus(
-        'ORDER_UPDATED',
-        'PAID',
-        'PARTIALLY_REFUNDED',
+        SupportedEventType.PaymentCaptured,
+        OrderStatus.Refunded,
+        OrderStatus.Paid,
+      ),
+    ).toBe(false);
+    expect(
+      service.canEventChangeStatus(
+        SupportedEventType.RefundIssued,
+        OrderStatus.Cancelled,
+        OrderStatus.Refunded,
+      ),
+    ).toBe(false);
+    expect(
+      service.canEventChangeStatus(
+        SupportedEventType.OrderUpdated,
+        OrderStatus.Paid,
+        OrderStatus.PartiallyRefunded,
       ),
     ).toBe(false);
   });

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { OrderVersionedField, ReasonCode } from '../../event.types';
 import type { OrderRow, ValidOrderEvent } from '../../event.types';
 import type { FieldChangeSet, NextOrderState } from '../event-processing.types';
 import { EventValidationService } from '../event-validation.service';
@@ -14,7 +15,7 @@ export class OrderUpdatedEventFieldsService {
   buildChangesFromOrderUpdatedEvent(
     event: ValidOrderEvent,
     order: OrderRow,
-    canApplyField: (fieldName: string) => boolean,
+    canApplyField: (fieldName: OrderVersionedField) => boolean,
   ): { nextState: NextOrderState; fields: FieldChangeSet } {
     const fields: FieldChangeSet = { changed: {}, skipped: {} };
     let nextAmountMinor = order.amount_minor;
@@ -25,11 +26,12 @@ export class OrderUpdatedEventFieldsService {
       const amountMinor = this.validationService.optionalMoneyToMinor(
         event.payload.amount,
       );
-      if (canApplyField('amountMinor')) {
+      if (canApplyField(OrderVersionedField.AmountMinor)) {
         nextAmountMinor = amountMinor;
-        fields.changed.amountMinor = amountMinor;
+        fields.changed[OrderVersionedField.AmountMinor] = amountMinor;
       } else {
-        fields.skipped.amountMinor = 'OBSOLETE_FIELD';
+        fields.skipped[OrderVersionedField.AmountMinor] =
+          ReasonCode.ObsoleteField;
       }
     }
 
@@ -37,11 +39,11 @@ export class OrderUpdatedEventFieldsService {
       const currency = this.validationService.optionalCurrency(
         event.payload.currency,
       );
-      if (canApplyField('currency')) {
+      if (canApplyField(OrderVersionedField.Currency)) {
         nextCurrency = currency;
-        fields.changed.currency = currency;
+        fields.changed[OrderVersionedField.Currency] = currency;
       } else {
-        fields.skipped.currency = 'OBSOLETE_FIELD';
+        fields.skipped[OrderVersionedField.Currency] = ReasonCode.ObsoleteField;
       }
     }
 
@@ -49,8 +51,8 @@ export class OrderUpdatedEventFieldsService {
       const requestedStatus = this.validationService.readOrderStatus(
         event.payload.status,
       );
-      if (!canApplyField('status')) {
-        fields.skipped.status = 'OBSOLETE_FIELD';
+      if (!canApplyField(OrderVersionedField.Status)) {
+        fields.skipped[OrderVersionedField.Status] = ReasonCode.ObsoleteField;
       } else if (
         !this.statusTransitionRules.canEventChangeStatus(
           event.type,
@@ -58,10 +60,11 @@ export class OrderUpdatedEventFieldsService {
           requestedStatus,
         )
       ) {
-        fields.skipped.status = 'FORBIDDEN_TRANSITION';
+        fields.skipped[OrderVersionedField.Status] =
+          ReasonCode.ForbiddenTransition;
       } else {
         nextStatus = requestedStatus;
-        fields.changed.status = requestedStatus;
+        fields.changed[OrderVersionedField.Status] = requestedStatus;
       }
     }
 

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import type { DatabaseSync as DatabaseSyncInstance } from 'node:sqlite';
 import { asSqliteRow } from '../../database/sqlite-row.util';
 import { SqliteService } from '../../database/sqlite.service';
+import { OrderStatus, OrderVersionedField } from '../event.types';
 import type {
   OrderRow,
   ValidOrderEvent,
@@ -40,11 +41,12 @@ export class OrderRepository {
             created_at,
             updated_at
           )
-          VALUES (?, 'CREATED', ?, ?, 0, 0, 1, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, 0, 0, 1, ?, ?, ?, ?)
         `,
       )
       .run(
         event.orderId,
+        OrderStatus.Created,
         amountMinor,
         currency,
         event.timestamp,
@@ -156,7 +158,7 @@ export class OrderRepository {
 
   canApplyField(
     orderId: string,
-    fieldName: string,
+    fieldName: OrderVersionedField,
     event: ValidOrderEvent,
   ): boolean {
     const row = this.db
@@ -174,7 +176,7 @@ export class OrderRepository {
 
   upsertFieldVersion(
     orderId: string,
-    fieldName: string,
+    fieldName: OrderVersionedField,
     event: ValidOrderEvent,
   ): void {
     this.db

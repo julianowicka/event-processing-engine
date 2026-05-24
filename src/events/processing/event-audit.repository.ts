@@ -3,11 +3,11 @@ import type { DatabaseSync as DatabaseSyncInstance } from 'node:sqlite';
 import type { JsonObject } from '../../common/json.types';
 import { SqliteService } from '../../database/sqlite.service';
 import { verboseLog } from '../event-verbose-logger';
+import { EngineDecision, ReasonCode } from '../event.types';
 import type {
-  EngineDecision,
+  OrderHistoryDecision,
   OrderStatus,
   ProcessingJobRow,
-  ReasonCode,
   ValidOrderEvent,
 } from '../event.types';
 import type { DecisionInput, DecisionResult } from './event-processing.types';
@@ -75,11 +75,14 @@ export class EventAuditRepository {
   }
 
   updateFinalStats(decision: EngineDecision, processingTimeMs: number): void {
-    const acceptedIncrement = decision === 'ACCEPTED' ? 1 : 0;
-    const partialIncrement = decision === 'PARTIALLY_APPLIED' ? 1 : 0;
+    const acceptedIncrement = decision === EngineDecision.Accepted ? 1 : 0;
+    const partialIncrement =
+      decision === EngineDecision.PartiallyApplied ? 1 : 0;
     const rejectedIncrement =
-      decision === 'REJECTED' || decision === 'FAILED' ? 1 : 0;
-    const duplicateIncrement = decision === 'DUPLICATE' ? 1 : 0;
+      decision === EngineDecision.Rejected || decision === EngineDecision.Failed
+        ? 1
+        : 0;
+    const duplicateIncrement = decision === EngineDecision.Duplicate ? 1 : 0;
     const validIncrement = acceptedIncrement + partialIncrement;
 
     this.db
@@ -115,7 +118,7 @@ export class EventAuditRepository {
     toStatus: OrderStatus,
     changedFields: JsonObject,
     skippedFields: JsonObject,
-    decision: 'ACCEPTED' | 'PARTIALLY_APPLIED',
+    decision: OrderHistoryDecision,
     reasonCode: ReasonCode,
   ): void {
     const now = new Date().toISOString();
@@ -177,7 +180,7 @@ export class EventAuditRepository {
             attempts,
             created_at
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, 'PROCESSING_ERROR', ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
       )
       .run(
@@ -188,6 +191,7 @@ export class EventAuditRepository {
         job.type,
         job.event_timestamp,
         job.raw_event_json,
+        ReasonCode.ProcessingError,
         errorMessage,
         attempts,
         new Date().toISOString(),

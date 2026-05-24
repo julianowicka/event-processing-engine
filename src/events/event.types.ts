@@ -9,52 +9,70 @@ export type {
   QueueEventInput,
 } from './events.types';
 
-export const supportedEventTypes = [
-  'ORDER_CREATED',
-  'ORDER_UPDATED',
-  'PAYMENT_CAPTURED',
-  'ORDER_CANCELLED',
-  'REFUND_ISSUED',
-] as const;
+export enum SupportedEventType {
+  OrderCreated = 'ORDER_CREATED',
+  OrderUpdated = 'ORDER_UPDATED',
+  PaymentCaptured = 'PAYMENT_CAPTURED',
+  OrderCancelled = 'ORDER_CANCELLED',
+  RefundIssued = 'REFUND_ISSUED',
+}
 
-export const orderStatuses = [
-  'CREATED',
-  'PAID',
-  'CANCELLED',
-  'PARTIALLY_REFUNDED',
-  'REFUNDED',
-] as const;
+export enum OrderStatus {
+  Created = 'CREATED',
+  Paid = 'PAID',
+  Cancelled = 'CANCELLED',
+  PartiallyRefunded = 'PARTIALLY_REFUNDED',
+  Refunded = 'REFUNDED',
+}
 
-export type SupportedEventType = (typeof supportedEventTypes)[number];
-export type OrderStatus = (typeof orderStatuses)[number];
+export enum JobStatus {
+  Pending = 'PENDING',
+  Deferred = 'DEFERRED',
+  Done = 'DONE',
+  DeadLettered = 'DEAD_LETTERED',
+}
 
-export type JobStatus = 'PENDING' | 'DEFERRED' | 'DONE' | 'DEAD_LETTERED';
+export enum EngineDecision {
+  Accepted = 'ACCEPTED',
+  PartiallyApplied = 'PARTIALLY_APPLIED',
+  Rejected = 'REJECTED',
+  Duplicate = 'DUPLICATE',
+  Deferred = 'DEFERRED',
+  Failed = 'FAILED',
+}
 
-export type EngineDecision =
-  | 'ACCEPTED'
-  | 'PARTIALLY_APPLIED'
-  | 'REJECTED'
-  | 'DUPLICATE'
-  | 'DEFERRED'
-  | 'FAILED';
+export enum ReasonCode {
+  Applied = 'APPLIED',
+  PartialMerge = 'PARTIAL_MERGE',
+  DuplicateEvent = 'DUPLICATE_EVENT',
+  InvalidSchema = 'INVALID_SCHEMA',
+  UnknownEventType = 'UNKNOWN_EVENT_TYPE',
+  OrderNotReady = 'ORDER_NOT_READY',
+  OrderAlreadyExists = 'ORDER_ALREADY_EXISTS',
+  ForbiddenTransition = 'FORBIDDEN_TRANSITION',
+  ObsoleteEvent = 'OBSOLETE_EVENT',
+  ObsoleteField = 'OBSOLETE_FIELD',
+  NoApplicableChanges = 'NO_APPLICABLE_CHANGES',
+  PaymentAmountRequired = 'PAYMENT_AMOUNT_REQUIRED',
+  PaymentAlreadyCaptured = 'PAYMENT_ALREADY_CAPTURED',
+  RefundAmountRequired = 'REFUND_AMOUNT_REQUIRED',
+  RefundExceedsCaptured = 'REFUND_EXCEEDS_CAPTURED',
+  ProcessingError = 'PROCESSING_ERROR',
+}
 
-export type ReasonCode =
-  | 'APPLIED'
-  | 'PARTIAL_MERGE'
-  | 'DUPLICATE_EVENT'
-  | 'INVALID_SCHEMA'
-  | 'UNKNOWN_EVENT_TYPE'
-  | 'ORDER_NOT_READY'
-  | 'ORDER_ALREADY_EXISTS'
-  | 'FORBIDDEN_TRANSITION'
-  | 'OBSOLETE_EVENT'
-  | 'OBSOLETE_FIELD'
-  | 'NO_APPLICABLE_CHANGES'
-  | 'PAYMENT_AMOUNT_REQUIRED'
-  | 'PAYMENT_ALREADY_CAPTURED'
-  | 'REFUND_AMOUNT_REQUIRED'
-  | 'REFUND_EXCEEDS_CAPTURED'
-  | 'PROCESSING_ERROR';
+export enum OrderVersionedField {
+  Status = 'status',
+  AmountMinor = 'amountMinor',
+  Currency = 'currency',
+}
+
+export const supportedEventTypes = Object.values(SupportedEventType);
+
+export const orderStatuses = Object.values(OrderStatus);
+
+export type OrderHistoryDecision =
+  | EngineDecision.Accepted
+  | EngineDecision.PartiallyApplied;
 
 export interface ProcessingJobRow {
   job_id: number;
@@ -144,7 +162,7 @@ export interface EventHistoryDetails {
   toStatus: OrderStatus;
   changedFields: JsonObject;
   skippedFields: JsonObject;
-  decision: 'ACCEPTED' | 'PARTIALLY_APPLIED';
+  decision: OrderHistoryDecision;
   reasonCode: string;
   createdAt: string;
 }

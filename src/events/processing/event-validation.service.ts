@@ -4,8 +4,11 @@ import { isJsonObject, parseJsonValue } from '../../common/json.util';
 import {
   OrderStatus,
   orderStatuses,
-  ProcessingJobRow,
+  ReasonCode,
   supportedEventTypes,
+} from '../event.types';
+import type {
+  ProcessingJobRow,
   SupportedEventType,
   ValidOrderEvent,
 } from '../event.types';
@@ -19,7 +22,7 @@ export class EventValidationService {
     if (!isJsonObject(raw)) {
       return {
         valid: false,
-        reasonCode: 'INVALID_SCHEMA',
+        reasonCode: ReasonCode.InvalidSchema,
         reasonMessage: 'Event item must be a JSON object',
       };
     }
@@ -33,7 +36,7 @@ export class EventValidationService {
     if (!eventId || !orderId || timestamp === null || !payload.valid) {
       return {
         valid: false,
-        reasonCode: 'INVALID_SCHEMA',
+        reasonCode: ReasonCode.InvalidSchema,
         reasonMessage:
           'Event is missing required fields or has invalid payload',
         details: {
@@ -48,7 +51,7 @@ export class EventValidationService {
     if (typeof record.type !== 'string') {
       return {
         valid: false,
-        reasonCode: 'INVALID_SCHEMA',
+        reasonCode: ReasonCode.InvalidSchema,
         reasonMessage: 'Event type must be a string',
       };
     }
@@ -56,7 +59,7 @@ export class EventValidationService {
     if (!supportedEventTypes.includes(record.type as SupportedEventType)) {
       return {
         valid: false,
-        reasonCode: 'UNKNOWN_EVENT_TYPE',
+        reasonCode: ReasonCode.UnknownEventType,
         reasonMessage: `Unsupported event type: ${record.type}`,
       };
     }
@@ -140,7 +143,7 @@ export class EventValidationService {
 
   private validatePayloadValues(event: ValidOrderEvent): {
     valid: false;
-    reasonCode: 'INVALID_SCHEMA';
+    reasonCode: ReasonCode.InvalidSchema;
     reasonMessage: string;
   } | null {
     try {
@@ -162,7 +165,7 @@ export class EventValidationService {
     } catch (error) {
       return {
         valid: false,
-        reasonCode: 'INVALID_SCHEMA',
+        reasonCode: ReasonCode.InvalidSchema,
         reasonMessage:
           error instanceof Error ? error.message : 'Invalid payload values',
       };

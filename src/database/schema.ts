@@ -1,3 +1,13 @@
+import {
+  EngineDecision,
+  JobStatus,
+  OrderStatus,
+  ReasonCode,
+} from '../events/event.types';
+
+const sqlStringList = (values: readonly string[]): string =>
+  values.map((value) => `'${value}'`).join(', ');
+
 export const databaseSchemaSql = `
 CREATE TABLE IF NOT EXISTS raw_incoming_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -14,7 +24,7 @@ CREATE TABLE IF NOT EXISTS event_processing_jobs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   raw_incoming_event_id INTEGER NOT NULL UNIQUE,
   status TEXT NOT NULL CHECK (
-    status IN ('PENDING', 'DEFERRED', 'DONE', 'DEAD_LETTERED')
+    status IN (${sqlStringList(Object.values(JobStatus))})
   ),
   available_at TEXT NOT NULL,
   attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
@@ -39,13 +49,7 @@ CREATE TABLE IF NOT EXISTS processed_event_keys (
 CREATE TABLE IF NOT EXISTS orders (
   order_id TEXT PRIMARY KEY,
   status TEXT NOT NULL CHECK (
-    status IN (
-      'CREATED',
-      'PAID',
-      'CANCELLED',
-      'PARTIALLY_REFUNDED',
-      'REFUNDED'
-    )
+    status IN (${sqlStringList(Object.values(OrderStatus))})
   ),
   amount_minor INTEGER,
   currency TEXT,
@@ -79,7 +83,12 @@ CREATE TABLE IF NOT EXISTS order_history (
   to_status TEXT,
   changed_fields_json TEXT NOT NULL DEFAULT '{}',
   skipped_fields_json TEXT NOT NULL DEFAULT '{}',
-  decision TEXT NOT NULL CHECK (decision IN ('ACCEPTED', 'PARTIALLY_APPLIED')),
+  decision TEXT NOT NULL CHECK (
+    decision IN (${sqlStringList([
+      EngineDecision.Accepted,
+      EngineDecision.PartiallyApplied,
+    ])})
+  ),
   reason_code TEXT NOT NULL,
   created_at TEXT NOT NULL,
   FOREIGN KEY (order_id) REFERENCES orders(order_id)
@@ -94,14 +103,7 @@ CREATE TABLE IF NOT EXISTS event_decisions (
   type TEXT,
   timestamp INTEGER,
   decision TEXT NOT NULL CHECK (
-    decision IN (
-      'ACCEPTED',
-      'PARTIALLY_APPLIED',
-      'REJECTED',
-      'DUPLICATE',
-      'DEFERRED',
-      'FAILED'
-    )
+    decision IN (${sqlStringList(Object.values(EngineDecision))})
   ),
   reason_code TEXT NOT NULL,
   reason_message TEXT NOT NULL,
@@ -133,7 +135,9 @@ CREATE TABLE IF NOT EXISTS dead_letter_events (
   type TEXT,
   timestamp INTEGER,
   raw_event_json TEXT NOT NULL,
-  reason_code TEXT NOT NULL CHECK (reason_code = 'PROCESSING_ERROR'),
+  reason_code TEXT NOT NULL CHECK (
+    reason_code = '${ReasonCode.ProcessingError}'
+  ),
   error_message TEXT NOT NULL,
   attempts INTEGER NOT NULL,
   created_at TEXT NOT NULL,

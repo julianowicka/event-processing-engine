@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import type { JsonObject, JsonValue } from '../common/json.types';
 import { isJsonObject } from '../common/json.util';
+import { QueueEventsMode, QueuedEventStatus } from './events.types';
 import type {
   EventProjection,
   QueueEventInput,
@@ -10,17 +11,13 @@ import type {
   QueueEventsResponse,
 } from './events.types';
 import { EventsRepository } from './events.repository';
-import { EventWorkerService } from './event-worker.service';
 import { verboseLog } from './event-verbose-logger';
 
 @Injectable()
 export class EventsService {
   private readonly logger = new Logger(EventsService.name);
 
-  constructor(
-    private readonly eventsRepository: EventsRepository,
-    private readonly eventWorkerService: EventWorkerService,
-  ) {}
+  constructor(private readonly eventsRepository: EventsRepository) {}
 
   enqueueBatch(body: JsonValue): QueueEventsResponse {
     if (!this.isQueueEventsRequest(body)) {
@@ -40,10 +37,8 @@ export class EventsService {
       processingJobIds: results.map((result) => result.processingJobId),
     });
 
-    this.eventWorkerService.nudge();
-
     return {
-      mode: 'ASYNC_WORKER',
+      mode: QueueEventsMode.AsyncWorker,
       results,
       summary: {
         queued: results.length,
@@ -62,7 +57,7 @@ export class EventsService {
       eventId: projection.eventId,
       orderId: projection.orderId,
       type: projection.type,
-      status: 'QUEUED',
+      status: QueuedEventStatus.Queued,
       reasonCode: null,
       reasonMessage: 'Event queued for background processing',
       processingTimeMs: 0,

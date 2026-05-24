@@ -3,9 +3,9 @@ import type { DatabaseSync as DatabaseSyncInstance } from 'node:sqlite';
 import { parseJsonObject } from '../common/json.util';
 import { asSqliteRow, asSqliteRows } from '../database/sqlite-row.util';
 import { SqliteService } from '../database/sqlite.service';
+import { EngineDecision, JobStatus } from '../events/event.types';
 import type {
-  EngineDecision,
-  JobStatus,
+  OrderHistoryDecision,
   OrderRow,
   OrderStatus,
 } from '../events/event.types';
@@ -27,7 +27,7 @@ interface OrderHistoryRow {
   to_status: OrderStatus;
   changed_fields_json: string;
   skipped_fields_json: string;
-  decision: 'ACCEPTED' | 'PARTIALLY_APPLIED';
+  decision: OrderHistoryDecision;
   reason_code: string;
   created_at: string;
 }
@@ -97,7 +97,11 @@ export class OrdersService {
       currentState,
       history: this.readHistory(orderId),
       rejectedEvents: auditLog.filter((entry) =>
-        ['REJECTED', 'DUPLICATE', 'FAILED'].includes(entry.decision),
+        [
+          EngineDecision.Rejected,
+          EngineDecision.Duplicate,
+          EngineDecision.Failed,
+        ].includes(entry.decision),
       ),
       pendingJobs: this.readPendingJobs(orderId),
       auditLog,
@@ -250,11 +254,11 @@ export class OrdersService {
             JOIN raw_incoming_events raw ON raw.id = jobs.raw_incoming_event_id
             LEFT JOIN event_decisions decisions ON decisions.id = jobs.last_decision_id
             WHERE raw.order_id = ?
-              AND jobs.status IN ('PENDING', 'DEFERRED')
+              AND jobs.status IN (?, ?)
             ORDER BY jobs.id ASC
           `,
         )
-        .all(orderId),
+        .all(orderId, JobStatus.Pending, JobStatus.Deferred),
     ).map((row) => ({
       id: row.id,
       rawIncomingEventId: row.raw_incoming_event_id,

@@ -8,7 +8,6 @@ const workerIntervalMs = Number(process.env.EVENT_WORKER_INTERVAL_MS ?? 1000);
 @Injectable()
 export class EventWorkerService implements OnModuleInit {
   private readonly logger = new Logger(EventWorkerService.name);
-  private running = false;
 
   constructor(
     private readonly eventProcessingService: EventProcessingService,
@@ -23,35 +22,21 @@ export class EventWorkerService implements OnModuleInit {
     this.runAvailableWork();
   }
 
-  nudge(): void {
-    setTimeout(() => this.runAvailableWork(), 0);
-  }
-
   private runAvailableWork(): void {
-    if (this.running) {
-      return;
+    let processedJobs = 0;
+
+    while (processedJobs < 500) {
+      const outcome = this.eventProcessingService.processNextAvailableJob();
+
+      if (!outcome) {
+        break;
+      }
+
+      processedJobs += 1;
     }
 
-    this.running = true;
-
-    try {
-      let processedJobs = 0;
-
-      while (processedJobs < 500) {
-        const outcome = this.eventProcessingService.processNextAvailableJob();
-
-        if (!outcome) {
-          break;
-        }
-
-        processedJobs += 1;
-      }
-
-      if (processedJobs > 0) {
-        verboseLog(this.logger, 'worker pass completed', { processedJobs });
-      }
-    } finally {
-      this.running = false;
+    if (processedJobs > 0) {
+      verboseLog(this.logger, 'worker pass completed', { processedJobs });
     }
   }
 }
