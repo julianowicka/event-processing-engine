@@ -23,6 +23,7 @@ export enum OrderStatus {
   Cancelled = 'CANCELLED',
   PartiallyRefunded = 'PARTIALLY_REFUNDED',
   Refunded = 'REFUNDED',
+  DoesNotExist = 'DOES_NOT_EXIST',
 }
 
 export enum ProcessingStatus {

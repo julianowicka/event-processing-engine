@@ -29,11 +29,20 @@ Detailed design documents live in [docs](./docs/README.md).
 docker compose up --build
 ```
 
+The default Compose file is configured for local development. API source files
+are mounted into the container and Nest runs in watch mode, so changes under
+`src` rebuild and restart automatically. Frontend files are also mounted into
+nginx, so refresh the browser after changing `frontend/index.html`,
+`frontend/styles.css`, or `frontend/app.js`.
+
+Use `--build` again only after changing Dockerfiles, package dependencies, or
+other image-level setup.
+
 Services:
 
 - API: `http://localhost:3100/api`
 - Frontend: `http://localhost:8080`
-- SQLite file in the `sqlite-data` Docker volume at `/data/app.sqlite`
+- SQLite file in the `database-data` Docker volume at `/data/app.sqlite`
 
 Verbose worker tracing can be enabled for debugging:
 

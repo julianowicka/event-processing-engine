@@ -23,6 +23,14 @@ export class RawIncomingEventRepository {
     return this.repository.save(this.repository.create(data));
   }
 
+  createMany(
+    data: DeepPartial<RawIncomingEventEntity>[],
+  ): Promise<RawIncomingEventEntity[]> {
+    return this.repository.save(
+      data.map((item) => this.repository.create(item)),
+    );
+  }
+
   findAll(): Promise<RawIncomingEventEntity[]> {
     return this.repository.find();
   }

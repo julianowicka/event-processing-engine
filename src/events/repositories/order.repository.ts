@@ -31,6 +31,10 @@ export class OrderRepository {
     return this.repository.findBy(where);
   }
 
+  findById(orderId: string): Promise<OrderEntity | null> {
+    return this.repository.findOneBy({ orderId });
+  }
+
   findOneBy(where: FindOptionsWhere<OrderEntity>): Promise<OrderEntity | null> {
     return this.repository.findOneBy(where);
   }

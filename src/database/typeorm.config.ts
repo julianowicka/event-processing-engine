@@ -3,6 +3,7 @@ import { dirname, resolve } from 'node:path';
 import type { TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { databaseEntities } from './entities';
 import { CreateEventEngineSchema1760000000000 } from './migrations/1760000000000-create-event-engine-schema';
+import { RepairLegacyEventEngineSchema1760000001000 } from './migrations/1760000001000-repair-legacy-event-engine-schema';
 
 export function getDatabasePath(): string {
   const configuredPath = process.env.SQLITE_DB_PATH ?? 'data/app.sqlite';
@@ -18,13 +19,19 @@ export function createTypeOrmOptions(): TypeOrmModuleOptions {
     mkdirSync(dirname(database), { recursive: true });
   }
 
+  const enableWal =
+    database !== ':memory:' && process.env.SQLITE_ENABLE_WAL === 'true';
+
   return {
     type: 'better-sqlite3',
     database,
     timeout: 5000,
-    enableWAL: database !== ':memory:',
+    enableWAL: enableWal,
     entities: databaseEntities,
-    migrations: [CreateEventEngineSchema1760000000000],
+    migrations: [
+      CreateEventEngineSchema1760000000000,
+      RepairLegacyEventEngineSchema1760000001000,
+    ],
     migrationsRun: true,
     synchronize: false,
     logging: false,
