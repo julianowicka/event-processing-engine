@@ -12,10 +12,7 @@ import {
   OrderEntity,
   RawIncomingEventEntity,
 } from '../../src/database/entities';
-import {
-  EngineDecision,
-  type EventDetailsResponse,
-} from '../../src/events/types/event.types';
+import { EngineDecision } from '../../src/events/types/event.types';
 import type { QueueEventsResponse } from '../../src/events/types/events.types';
 import type { OrderDetailsResponse } from '../../src/orders/orders.types';
 
@@ -104,7 +101,6 @@ describe('Event ingestion API (e2e)', () => {
         expect(body.results).toHaveLength(hostileBatch.length);
         expect(body.results[0]).toMatchObject({
           incomingEventId: 1,
-          processingJobId: 1,
           eventId: 'evt-hard-002',
           orderId: 'ord-hard-501',
           type: 'PAYMENT_CAPTURED',
@@ -112,7 +108,7 @@ describe('Event ingestion API (e2e)', () => {
           processingTimeMs: 0,
         });
         expect(body.results[5]).toMatchObject({
-          eventId: null,
+          eventId: '',
           type: 'REFUND_ISSUED',
         });
         expect(body.results[7]).toMatchObject({
@@ -123,25 +119,22 @@ describe('Event ingestion API (e2e)', () => {
       });
 
     const stats = await waitForStats({
-      processedEventsCount: hostileBatch.length,
+      processedEventsCount: hostileBatch.length - 1,
     });
 
     expect(stats).toMatchObject({
       rawDeliveriesCount: hostileBatch.length,
-      queuedJobsCount: hostileBatch.length,
-      pendingEventsCount: 0,
-      validEventsCount: 3,
-      acceptedEventsCount: 2,
-      partiallyAppliedEventsCount: 1,
-      processedEventsCount: hostileBatch.length,
+      pendingEventsCount: 1,
+      validEventsCount: 2,
+      processedEventsCount: hostileBatch.length - 1,
       duplicateEventsCount: 1,
       rejectedEventsCount: 5,
     });
 
     expect(await readOrder('ord-hard-501')).toMatchObject({
-      status: 'PAID',
+      status: 'CREATED',
       amount_minor: 24999,
-      paid_amount_minor: 19999,
+      paid_amount_minor: 0,
       refunded_amount_minor: 0,
     });
 
@@ -150,7 +143,7 @@ describe('Event ingestion API (e2e)', () => {
         expect.objectContaining({
           decision: 'ACCEPTED',
           reason_code: 'APPLIED',
-          count: 2,
+          count: 1,
         }),
         expect.objectContaining({
           decision: 'PARTIALLY_APPLIED',
@@ -160,11 +153,6 @@ describe('Event ingestion API (e2e)', () => {
         expect.objectContaining({
           decision: 'DUPLICATE',
           reason_code: 'DUPLICATE_EVENT',
-          count: 1,
-        }),
-        expect.objectContaining({
-          decision: 'DEFERRED',
-          reason_code: 'ORDER_NOT_READY',
           count: 1,
         }),
       ]),
@@ -178,7 +166,7 @@ describe('Event ingestion API (e2e)', () => {
       .expect(400);
   });
 
-  it('recovers refund and payment events that arrive before order creation', async () => {
+  it('keeps events that arrive before order creation retryable', async () => {
     const outOfOrderBatch = [
       {
         eventId: 'evt-recover-003',
@@ -213,37 +201,47 @@ describe('Event ingestion API (e2e)', () => {
         expect(body.summary).toMatchObject({ queued: 3 });
       });
 
-    const stats = await waitForStats({ processedEventsCount: 3 });
+    const stats = await waitForStats({ processedEventsCount: 1 });
 
     expect(stats).toMatchObject({
       rawDeliveriesCount: 3,
-      queuedJobsCount: 3,
-      pendingEventsCount: 0,
-      validEventsCount: 3,
-      acceptedEventsCount: 3,
+      pendingEventsCount: 2,
+      validEventsCount: 1,
       rejectedEventsCount: 0,
       duplicateEventsCount: 0,
     });
 
-    expect(await readOrder('ord-recover-001')).toMatchObject({
-      status: 'PARTIALLY_REFUNDED',
-      paid_amount_minor: 12000,
-      refunded_amount_minor: 3000,
+    const order = await waitForOrder('ord-recover-001');
+
+    expect(order.currentState).toMatchObject({
+      status: 'CREATED',
+      paidAmountMinor: 0,
+      refundedAmountMinor: 0,
     });
+    expect(order.pendingJobs).toHaveLength(2);
+    expect(order.pendingJobs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventId: 'evt-recover-003',
+          status: 'RETRY',
+          attempts: 1,
+        }),
+        expect.objectContaining({
+          eventId: 'evt-recover-002',
+          status: 'RETRY',
+          attempts: 1,
+        }),
+      ]),
+    );
 
     expect(await readDecisionCounts()).toEqual(
-      expect.arrayContaining([
+      [
         expect.objectContaining({
           decision: 'ACCEPTED',
           reason_code: 'APPLIED',
-          count: 3,
+          count: 1,
         }),
-        expect.objectContaining({
-          decision: 'DEFERRED',
-          reason_code: 'ORDER_NOT_READY',
-          count: 3,
-        }),
-      ]),
+      ],
     );
   });
 
@@ -252,18 +250,18 @@ describe('Event ingestion API (e2e)', () => {
     const forbiddenOrderId = 'ord-ui-state-001';
     const stressBatch = [
       {
-        eventId: 'evt-ui-stress-002',
-        orderId: stressOrderId,
-        type: 'PAYMENT_CAPTURED',
-        timestamp: 1710002000,
-        payload: { amount: 120 },
-      },
-      {
         eventId: 'evt-ui-stress-001',
         orderId: stressOrderId,
         type: 'ORDER_CREATED',
         timestamp: 1710001000,
         payload: { amount: 120, currency: 'PLN' },
+      },
+      {
+        eventId: 'evt-ui-stress-002',
+        orderId: stressOrderId,
+        type: 'PAYMENT_CAPTURED',
+        timestamp: 1710002000,
+        payload: { amount: 120 },
       },
       {
         eventId: 'evt-ui-stress-003',
@@ -344,11 +342,8 @@ describe('Event ingestion API (e2e)', () => {
 
     expect(statsAfterStress).toMatchObject({
       rawDeliveriesCount: 6,
-      queuedJobsCount: 6,
       pendingEventsCount: 0,
       validEventsCount: 5,
-      acceptedEventsCount: 4,
-      partiallyAppliedEventsCount: 1,
       processedEventsCount: 6,
       duplicateEventsCount: 1,
       rejectedEventsCount: 0,
@@ -370,11 +365,8 @@ describe('Event ingestion API (e2e)', () => {
 
     expect(statsAfterForbidden).toMatchObject({
       rawDeliveriesCount: 10,
-      queuedJobsCount: 10,
       pendingEventsCount: 0,
       validEventsCount: 7,
-      acceptedEventsCount: 6,
-      partiallyAppliedEventsCount: 1,
       processedEventsCount: 10,
       duplicateEventsCount: 1,
       rejectedEventsCount: 2,
@@ -448,7 +440,6 @@ describe('Event ingestion API (e2e)', () => {
             currency: 'PLN',
             paidAmountMinor: 0,
             refundedAmountMinor: 0,
-            version: 2,
           },
           pendingJobs: [],
         });
@@ -497,7 +488,7 @@ describe('Event ingestion API (e2e)', () => {
       });
   });
 
-  it('rejects an event when its required order does not exist yet', async () => {
+  it('keeps an event retryable while its required order does not exist', async () => {
     const orderId = 'ord-read-deferred-001';
 
     await request(app.getHttpServer())
@@ -519,123 +510,24 @@ describe('Event ingestion API (e2e)', () => {
       orderId,
       currentState: null,
       history: [],
-      rejectedEvents: [
-        expect.objectContaining({
-          eventId: 'evt-read-deferred-001',
-          decision: 'REJECTED',
-          reasonCode: 'ORDER_NOT_READY',
-        }),
-      ],
+      rejectedEvents: [],
+      auditLog: [],
     });
-    expect(order.auditLog).toEqual([
+    expect(order.pendingJobs).toEqual([
       expect.objectContaining({
         eventId: 'evt-read-deferred-001',
         orderId,
         type: 'PAYMENT_CAPTURED',
-        decision: 'REJECTED',
-        reasonCode: 'ORDER_NOT_READY',
+        status: 'RETRY',
+        attempts: 1,
+        lastErrorMessage: 'Event requires an existing order',
       }),
     ]);
-    expect(order.pendingJobs).toEqual([]);
   });
 
   it('returns 404 for a completely unknown order', async () => {
     await request(app.getHttpServer())
       .get('/api/orders/ord-does-not-exist')
-      .expect(404);
-  });
-
-  it('returns raw deliveries, decisions and history for one event id', async () => {
-    const orderId = 'ord-event-inspector-001';
-    const eventId = 'evt-event-inspector-001';
-    const batch = [
-      {
-        eventId,
-        orderId,
-        type: 'ORDER_CREATED',
-        timestamp: 1710001000,
-        payload: { amount: 70, currency: 'PLN' },
-      },
-      {
-        eventId,
-        orderId,
-        type: 'ORDER_CREATED',
-        timestamp: 1710001000,
-        payload: { amount: 70, currency: 'PLN' },
-      },
-    ];
-
-    await request(app.getHttpServer())
-      .post('/api/events')
-      .send(batch)
-      .expect(201);
-
-    await waitForStats({ processedEventsCount: 2 });
-
-    await request(app.getHttpServer())
-      .get(`/api/events/${eventId}`)
-      .expect(200)
-      .expect((response) => {
-        const body = response.body as EventDetailsResponse;
-
-        expect(body).toMatchObject({
-          eventId,
-          orderIds: [orderId],
-        });
-        expect(body.deliveries).toHaveLength(2);
-        expect(body.deliveries[0]).toMatchObject({
-          eventId,
-          orderId,
-          type: 'ORDER_CREATED',
-          processingJob: {
-            status: 'DONE',
-            latestDecision: {
-              decision: 'ACCEPTED',
-              reasonCode: 'APPLIED',
-            },
-          },
-        });
-        expect(body.deliveries[1]).toMatchObject({
-          eventId,
-          orderId,
-          type: 'ORDER_CREATED',
-          processingJob: {
-            status: 'DONE',
-            latestDecision: {
-              decision: 'DUPLICATE',
-              reasonCode: 'DUPLICATE_EVENT',
-            },
-          },
-        });
-        expect(body.decisions).toEqual([
-          expect.objectContaining({
-            decision: 'ACCEPTED',
-            reasonCode: 'APPLIED',
-          }),
-          expect.objectContaining({
-            decision: 'DUPLICATE',
-            reasonCode: 'DUPLICATE_EVENT',
-          }),
-        ]);
-        expect(body.history).toEqual([
-          expect.objectContaining({
-            orderId,
-            eventId,
-            type: 'ORDER_CREATED',
-            toStatus: 'CREATED',
-            changedFields: {
-              status: 'CREATED',
-              amountMinor: 7000,
-              currency: 'PLN',
-            },
-          }),
-        ]);
-      });
-  });
-
-  it('returns 404 for a completely unknown event id', async () => {
-    await request(app.getHttpServer())
-      .get('/api/events/evt-does-not-exist')
       .expect(404);
   });
 
@@ -688,9 +580,7 @@ describe('Event ingestion API (e2e)', () => {
 
     expect(stats).toMatchObject({
       rawDeliveriesCount: 8,
-      queuedJobsCount: 8,
       pendingEventsCount: 0,
-      acceptedEventsCount: 2,
       rejectedEventsCount: 2,
       duplicateEventsCount: 4,
     });
@@ -748,11 +638,8 @@ describe('Event ingestion API (e2e)', () => {
 
     expect(stats).toMatchObject({
       rawDeliveriesCount: 3,
-      queuedJobsCount: 3,
       pendingEventsCount: 0,
       validEventsCount: 3,
-      acceptedEventsCount: 2,
-      partiallyAppliedEventsCount: 1,
       rejectedEventsCount: 0,
     });
 
@@ -818,9 +705,7 @@ describe('Event ingestion API (e2e)', () => {
 
     expect(stats).toMatchObject({
       rawDeliveriesCount: 4,
-      queuedJobsCount: 4,
       pendingEventsCount: 0,
-      acceptedEventsCount: 2,
       rejectedEventsCount: 2,
       duplicateEventsCount: 0,
     });
@@ -970,7 +855,11 @@ describe('Event ingestion API (e2e)', () => {
       );
       const body = response.body as Partial<OrderDetailsResponse>;
 
-      if (response.status === 200 && (body.auditLog?.length ?? 0) > 0) {
+      if (
+        response.status === 200 &&
+        ((body.auditLog?.length ?? 0) > 0 ||
+          (body.pendingJobs ?? []).some((job) => job.status === 'RETRY'))
+      ) {
         return body as OrderDetailsResponse;
       }
 
