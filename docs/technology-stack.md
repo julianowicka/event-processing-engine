@@ -32,11 +32,12 @@ architecture.
 - In-process `EventWorkerService` for background processing.
 - Worker interval defaults to `100` ms and can be changed with
   `EVENT_PROCESSING_SCHEDULER_INTERVAL_MS`.
-- Events requiring a missing order retry after 5 seconds and are rejected with
+- Events requiring a missing order retry after 10 seconds and are rejected with
   `ORDER_NOT_READY` after three unsuccessful attempts.
-- Technical failures retry after 5 seconds, up to `3` attempts, then produce
+- Technical failures retry after 10 seconds, up to `3` attempts, then produce
   a final `FAILED` decision.
-- `EVENT_RETRY_DELAY_MS` overrides the shared retry delay for both cases.
+- `EVENT_RETRY_DELAY_MS` configures the shared retry delay for both cases;
+  Docker Compose deployments set it to `10000` ms.
 
 ## Validation
 

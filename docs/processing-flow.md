@@ -64,7 +64,7 @@ Only unexpected technical failures are retried.
 
 1. Increment `raw_incoming_events.attempts`.
 2. If attempts remain, set `processing_status = RETRY`, set `available_at` for
-   5 seconds later, and save `last_error_message`.
+   10 seconds later, and save `last_error_message`.
 3. If the retry limit is reached, set status to `DONE`, write a final `FAILED`
    audit decision, and update stats.
 

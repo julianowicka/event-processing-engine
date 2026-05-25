@@ -42,12 +42,10 @@ let payloadEditedManually = false;
 let lastQueuedResults = [];
 
 const metricFields = [
-  'rawDeliveriesCount',
-  'queuedJobsCount',
-  'pendingEventsCount',
-  'processedEventsCount',
+  'validEventsCount',
   'rejectedEventsCount',
   'duplicateEventsCount',
+  'averageProcessingTimeMs',
 ];
 
 const scenarioFactories = {
@@ -391,7 +389,7 @@ async function sendBatch() {
   lastRunStatus.textContent = 'Sending';
 
   try {
-    const beforeStats = await loadStats();
+    const beforeFinalizedCount = finalizedEventsCount(await loadStats());
 
     if (activeScenario && !payloadEditedManually) {
       refreshScenarioPayload();
@@ -408,11 +406,11 @@ async function sendBatch() {
     renderResults(queuedBatch.results);
     renderResponse(response);
 
-    const settledStats = await waitForProcessedCount(
-      beforeStats.processedEventsCount + queuedBatch.queuedCount,
+    const settledStats = await waitForFinalizedCount(
+      beforeFinalizedCount + queuedBatch.queuedCount,
     );
     const processedDelta =
-      settledStats.processedEventsCount - beforeStats.processedEventsCount;
+      finalizedEventsCount(settledStats) - beforeFinalizedCount;
 
     setMessage(
       `Queued ${queuedBatch.queuedCount} deliveries. Worker processed ${processedDelta}.`,
@@ -489,14 +487,19 @@ async function loadStats() {
   return stats;
 }
 
-async function waitForProcessedCount(targetProcessedCount) {
+function finalizedEventsCount(stats) {
+  return (
+    stats.validEventsCount +
+    stats.rejectedEventsCount +
+    stats.duplicateEventsCount
+  );
+}
+
+async function waitForFinalizedCount(targetFinalizedCount) {
   let stats = await loadStats();
 
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    if (
-      stats.processedEventsCount >= targetProcessedCount ||
-      stats.pendingEventsCount === 0
-    ) {
+    if (finalizedEventsCount(stats) >= targetFinalizedCount) {
       return stats;
     }
 

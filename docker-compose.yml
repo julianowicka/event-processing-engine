@@ -13,6 +13,7 @@ services:
       TSC_WATCHFILE: FixedPollingInterval
       TSC_WATCHDIRECTORY: RecursiveDirectoryUsingFsWatchFile
       EVENT_WORKER_VERBOSE_LOGS: ${EVENT_WORKER_VERBOSE_LOGS:-false}
+      EVENT_RETRY_DELAY_MS: "10000"
     ports:
       - '3100:3000'
     volumes:

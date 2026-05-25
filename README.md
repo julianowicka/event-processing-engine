@@ -12,7 +12,7 @@ statistics.
 - Persistence: TypeORM 1 with `better-sqlite3` and a local SQLite database file.
 - Default database path: `data/app.sqlite`.
 - Database override: `SQLITE_DB_PATH=/absolute/path/app.sqlite`.
-- Retry delay override: `EVENT_RETRY_DELAY_MS=5000` (applies to all retries).
+- Retry delay: `EVENT_RETRY_DELAY_MS=10000` (applies to all retries).
 - Schema: TypeORM migrations; schema synchronization is disabled.
 - `POST /events` is ingestion-only and returns queued results.
 - `raw_incoming_events` stores raw deliveries and their technical queue status.
@@ -50,12 +50,8 @@ Verbose worker tracing can be enabled for debugging:
 EVENT_WORKER_VERBOSE_LOGS=true docker compose up --build
 ```
 
-All retries default to 5 seconds. Override the shared delay in milliseconds
-with `EVENT_RETRY_DELAY_MS`, for example:
-
-```bash
-EVENT_RETRY_DELAY_MS=5000 docker compose up --build
-```
+All Docker Compose deployments set the shared retry delay to 10 seconds with
+`EVENT_RETRY_DELAY_MS=10000`.
 
 Then inspect the processing flow with:
 
@@ -111,8 +107,8 @@ history.
   decisions, and matching history rows.
 - `GET /api/orders/:id`: returns current order state, history, rejected events,
   pending jobs, and audit log.
-- `GET /api/stats`: returns valid, rejected, duplicate, timing, and pending
-  counters.
+- `GET /api/stats`: returns valid, rejected, duplicate, and average processing
+  time metrics.
 - `GET /api/health`: returns service status and configured database path.
 
 Example event batch:

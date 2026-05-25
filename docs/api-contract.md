@@ -120,7 +120,7 @@ business endpoint.
 
 ## `GET /stats`
 
-Returns the required precomputed statistics:
+Returns exactly the four required precomputed statistics:
 
 ```json
 {
@@ -137,6 +137,8 @@ Returns the required precomputed statistics:
 - Duplicate events are counted separately.
 - Average processing time is computed from the stored total and final processed
   count.
+- No queue state, raw delivery count, aggregate processed count, or update
+  timestamp is exposed by this endpoint.
 
 ## Event And Ordering Rules
 
@@ -154,4 +156,4 @@ Returns the required precomputed statistics:
   from the same event may still be partially applied and the skipped status is
   recorded in the audit decision.
 - An event that requires a missing order stays retryable for up to three
-  attempts, scheduled 5 seconds apart, before final rejection.
+  attempts, scheduled 10 seconds apart, before final rejection.

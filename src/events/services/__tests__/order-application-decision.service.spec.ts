@@ -27,7 +27,7 @@ describe('OrderApplicationDecisionService', () => {
     }
   });
 
-  it('retries a transient rejection five seconds later before the limit', async () => {
+  it('retries a transient rejection ten seconds later before the limit', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-05-25T10:00:00.000Z'));
     const writer = new EventDecisionWriterService();
     const markRetryableFailure = jest
@@ -49,7 +49,7 @@ describe('OrderApplicationDecisionService', () => {
       context.manager,
       context.delivery,
       'Event requires an existing order',
-      '2026-05-25T10:00:05.000Z',
+      '2026-05-25T10:00:10.000Z',
     );
     expect(writeFinalDecision).not.toHaveBeenCalled();
   });

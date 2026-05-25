@@ -31,7 +31,7 @@ The primary design documents are:
 - Statistics: one `stats` row keeps required counters fast to read.
 - Technical failures: exhausted retries produce a final `FAILED` decision.
 - Scope reduction: no multi-worker locking is required; missing-order events
-  use a bounded 5-second retry before final rejection.
+  use a bounded 10-second retry before final rejection.
 
 ## Target Flow
 

@@ -31,7 +31,7 @@ individual raw delivery:
 ## Missing Order
 
 If an otherwise valid event references an order that does not exist yet, it is
-kept in `RETRY` and made available 5 seconds later. After three unsuccessful
+kept in `RETRY` and made available 10 seconds later. After three unsuccessful
 attempts, the final decision is `REJECTED` with reason `ORDER_NOT_READY`.
 
 ## Failure Safety
@@ -52,8 +52,8 @@ retryable because order creation may still arrive.
 
 Target worker behavior:
 
-- Retry `ORDER_NOT_READY` 5 seconds later and reject it on attempt `3`.
-- Retry technical failures 5 seconds later, up to `3` attempts.
+- Retry `ORDER_NOT_READY` 10 seconds later and reject it on attempt `3`.
+- Retry technical failures 10 seconds later, up to `3` attempts.
 - Keep failed-but-retryable deliveries `RETRY` until their next `available_at`.
 - After attempt `3`, finish the delivery with a `FAILED` decision and its error
   message; its raw event snapshot remains available from

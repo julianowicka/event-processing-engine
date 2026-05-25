@@ -43,10 +43,16 @@ export class EventProcessingSchedulerService implements OnModuleInit {
     this.isPolling = true;
 
     try {
-      const events = await this.rawIncomingEventRepository.findBy([
-        { processingStatus: ProcessingStatus.Pending },
-        { processingStatus: ProcessingStatus.Retry },
-      ]);
+      const events = await this.rawIncomingEventRepository.find({
+        where: [
+          { processingStatus: ProcessingStatus.Pending },
+          { processingStatus: ProcessingStatus.Retry },
+        ],
+        order: {
+          eventTimestamp: { direction: 'ASC', nulls: 'LAST' },
+          id: 'ASC',
+        },
+      });
       const availableEvents = await this.filterAvailableEvents(events);
 
       await this.processEvents(availableEvents);

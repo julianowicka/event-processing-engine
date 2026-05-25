@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import {
   DeepPartial,
   DeleteResult,
+  FindManyOptions,
   FindOptionsWhere,
   QueryDeepPartialEntity,
   Repository,
@@ -33,6 +34,12 @@ export class RawIncomingEventRepository {
 
   findAll(): Promise<RawIncomingEventEntity[]> {
     return this.repository.find();
+  }
+
+  find(
+    options: FindManyOptions<RawIncomingEventEntity>,
+  ): Promise<RawIncomingEventEntity[]> {
+    return this.repository.find(options);
   }
 
   findBy(

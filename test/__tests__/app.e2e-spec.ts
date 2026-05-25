@@ -123,22 +123,19 @@ describe('Event ingestion API (e2e)', () => {
       });
 
     const stats = await waitForStats({
-      processedEventsCount: hostileBatch.length - 1,
+      finalizedEventsCount: hostileBatch.length - 1,
     });
 
     expect(stats).toMatchObject({
-      rawDeliveriesCount: hostileBatch.length,
-      pendingEventsCount: 1,
-      validEventsCount: 2,
-      processedEventsCount: hostileBatch.length - 1,
+      validEventsCount: 3,
       duplicateEventsCount: 1,
-      rejectedEventsCount: 5,
+      rejectedEventsCount: 4,
     });
 
     expect(await readOrder('ord-hard-501')).toMatchObject({
-      status: 'CREATED',
+      status: 'PAID',
       amount_minor: 24999,
-      paid_amount_minor: 0,
+      paid_amount_minor: 19999,
       refunded_amount_minor: 0,
     });
 
@@ -147,7 +144,7 @@ describe('Event ingestion API (e2e)', () => {
         expect.objectContaining({
           decision: 'ACCEPTED',
           reason_code: 'APPLIED',
-          count: 1,
+          count: 2,
         }),
         expect.objectContaining({
           decision: 'PARTIALLY_APPLIED',
@@ -170,7 +167,7 @@ describe('Event ingestion API (e2e)', () => {
       .expect(400);
   });
 
-  it('keeps events that arrive before order creation retryable', async () => {
+  it('processes an out-of-order batch from the lowest timestamp first', async () => {
     const outOfOrderBatch = [
       {
         eventId: 'evt-recover-003',
@@ -205,12 +202,10 @@ describe('Event ingestion API (e2e)', () => {
         expect(body.summary).toMatchObject({ queued: 3 });
       });
 
-    const stats = await waitForStats({ processedEventsCount: 1 });
+    const stats = await waitForStats({ finalizedEventsCount: 3 });
 
     expect(stats).toMatchObject({
-      rawDeliveriesCount: 3,
-      pendingEventsCount: 2,
-      validEventsCount: 1,
+      validEventsCount: 3,
       rejectedEventsCount: 0,
       duplicateEventsCount: 0,
     });
@@ -218,31 +213,17 @@ describe('Event ingestion API (e2e)', () => {
     const order = await waitForOrder('ord-recover-001');
 
     expect(order.currentState).toMatchObject({
-      status: 'CREATED',
-      paidAmountMinor: 0,
-      refundedAmountMinor: 0,
+      status: 'PARTIALLY_REFUNDED',
+      paidAmountMinor: 12000,
+      refundedAmountMinor: 3000,
     });
-    expect(order.pendingJobs).toHaveLength(2);
-    expect(order.pendingJobs).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          eventId: 'evt-recover-003',
-          status: 'RETRY',
-          attempts: 1,
-        }),
-        expect.objectContaining({
-          eventId: 'evt-recover-002',
-          status: 'RETRY',
-          attempts: 1,
-        }),
-      ]),
-    );
+    expect(order.pendingJobs).toEqual([]);
 
     expect(await readDecisionCounts()).toEqual([
       expect.objectContaining({
         decision: 'ACCEPTED',
         reason_code: 'APPLIED',
-        count: 1,
+        count: 3,
       }),
     ]);
   });
@@ -335,21 +316,25 @@ describe('Event ingestion API (e2e)', () => {
         expect(body.summary).toMatchObject({ queued: 6 });
       });
 
-    await waitForStats({ processedEventsCount: 6 });
+    await waitForStats({ finalizedEventsCount: 6 });
 
     const statsAfterStress = await request(app.getHttpServer())
       .get('/api/stats')
       .expect(200)
       .then((response) => response.body as Record<string, number>);
 
+    expect(Object.keys(statsAfterStress).sort()).toEqual([
+      'averageProcessingTimeMs',
+      'duplicateEventsCount',
+      'rejectedEventsCount',
+      'validEventsCount',
+    ]);
     expect(statsAfterStress).toMatchObject({
-      rawDeliveriesCount: 6,
-      pendingEventsCount: 0,
       validEventsCount: 5,
-      processedEventsCount: 6,
       duplicateEventsCount: 1,
       rejectedEventsCount: 0,
     });
+    expect(typeof statsAfterStress.averageProcessingTimeMs).toBe('number');
 
     await request(app.getHttpServer())
       .post('/api/events')
@@ -362,14 +347,11 @@ describe('Event ingestion API (e2e)', () => {
       });
 
     const statsAfterForbidden = await waitForStats({
-      processedEventsCount: 10,
+      finalizedEventsCount: 10,
     });
 
     expect(statsAfterForbidden).toMatchObject({
-      rawDeliveriesCount: 10,
-      pendingEventsCount: 0,
       validEventsCount: 7,
-      processedEventsCount: 10,
       duplicateEventsCount: 1,
       rejectedEventsCount: 2,
     });
@@ -425,7 +407,7 @@ describe('Event ingestion API (e2e)', () => {
       .send(batch)
       .expect(201);
 
-    await waitForStats({ processedEventsCount: 4 });
+    await waitForStats({ finalizedEventsCount: 4 });
 
     await request(app.getHttpServer())
       .get(`/api/orders/${orderId}`)
@@ -506,7 +488,7 @@ describe('Event ingestion API (e2e)', () => {
       .send([event, event])
       .expect(201);
 
-    await waitForStats({ processedEventsCount: 2 });
+    await waitForStats({ finalizedEventsCount: 2 });
 
     await request(app.getHttpServer())
       .get(`/api/events/${eventId}`)
@@ -635,18 +617,16 @@ describe('Event ingestion API (e2e)', () => {
       .send(forbiddenBatch)
       .expect(201);
 
-    await waitForStats({ processedEventsCount: 4 });
+    await waitForStats({ finalizedEventsCount: 4 });
 
     await request(app.getHttpServer())
       .post('/api/events')
       .send(forbiddenBatch)
       .expect(201);
 
-    const stats = await waitForStats({ processedEventsCount: 8 });
+    const stats = await waitForStats({ finalizedEventsCount: 8 });
 
     expect(stats).toMatchObject({
-      rawDeliveriesCount: 8,
-      pendingEventsCount: 0,
       rejectedEventsCount: 2,
       duplicateEventsCount: 4,
     });
@@ -697,14 +677,19 @@ describe('Event ingestion API (e2e)', () => {
 
     await request(app.getHttpServer())
       .post('/api/events')
-      .send(batch)
+      .send(batch.slice(0, 2))
       .expect(201);
 
-    const stats = await waitForStats({ processedEventsCount: 3 });
+    await waitForStats({ finalizedEventsCount: 2 });
+
+    await request(app.getHttpServer())
+      .post('/api/events')
+      .send(batch.slice(2))
+      .expect(201);
+
+    const stats = await waitForStats({ finalizedEventsCount: 3 });
 
     expect(stats).toMatchObject({
-      rawDeliveriesCount: 3,
-      pendingEventsCount: 0,
       validEventsCount: 3,
       rejectedEventsCount: 0,
     });
@@ -767,11 +752,9 @@ describe('Event ingestion API (e2e)', () => {
       .send(batch)
       .expect(201);
 
-    const stats = await waitForStats({ processedEventsCount: 4 });
+    const stats = await waitForStats({ finalizedEventsCount: 4 });
 
     expect(stats).toMatchObject({
-      rawDeliveriesCount: 4,
-      pendingEventsCount: 0,
       rejectedEventsCount: 2,
       duplicateEventsCount: 0,
     });
@@ -900,8 +883,13 @@ describe('Event ingestion API (e2e)', () => {
         .expect(200)
         .then((response) => response.body as Record<string, number>);
 
-      const matched = Object.entries(expected).every(
-        ([key, value]) => latest[key] === value,
+      const matched = Object.entries(expected).every(([key, value]) =>
+        key === 'finalizedEventsCount'
+          ? latest.validEventsCount +
+              latest.rejectedEventsCount +
+              latest.duplicateEventsCount ===
+            value
+          : latest[key] === value,
       );
 
       if (matched) {

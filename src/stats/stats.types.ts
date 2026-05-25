@@ -11,9 +11,5 @@ export interface EngineStats {
   validEventsCount: number;
   rejectedEventsCount: number;
   duplicateEventsCount: number;
-  processedEventsCount: number;
   averageProcessingTimeMs: number;
-  pendingEventsCount: number;
-  rawDeliveriesCount: number;
-  updatedAt: string;
 }

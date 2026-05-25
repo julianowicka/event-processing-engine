@@ -326,6 +326,6 @@ locking would require additional lifecycle columns or another durable claiming
 mechanism.
 
 An event that requires an order before an `ORDER_CREATED` event has been applied
-is retried 5 seconds later and rejected after three unsuccessful processing
+is retried 10 seconds later and rejected after three unsuccessful processing
 attempts. Out-of-order partial updates for an existing order still use
 field-level merge rules through `order_field_versions`.
