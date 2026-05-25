@@ -19,7 +19,7 @@ export class OrderUpdateApplicationService {
 
   async updateOrderFields(context: OrderEventHandlingContext): Promise<void> {
     if (!context.order) {
-      await this.decision.reject(
+      await this.decision.retryOrReject(
         context,
         ReasonCode.OrderNotReady,
         'Event requires an existing order',

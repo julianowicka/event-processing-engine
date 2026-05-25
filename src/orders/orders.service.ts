@@ -28,24 +28,20 @@ export class OrdersService {
   ) {}
 
   async getOrderDetails(orderId: string): Promise<OrderDetailsResponse> {
-    const [currentState, auditLog] = await Promise.all([
+    const [currentState, auditLog, pendingJobs] = await Promise.all([
       this.findCurrentState(orderId),
       this.readAuditLog(orderId),
-    ]);
-
-    if (!currentState && auditLog.length === 0) {
-      throw new NotFoundException(`Order ${orderId} was not found`);
-    }
-
-    const [history, pendingJobs] = await Promise.all([
-      Promise.resolve(this.readHistory(auditLog)),
       this.readPendingJobs(orderId),
     ]);
+
+    if (!currentState && auditLog.length === 0 && pendingJobs.length === 0) {
+      throw new NotFoundException(`Order ${orderId} was not found`);
+    }
 
     return {
       orderId,
       currentState,
-      history,
+      history: this.readHistory(auditLog),
       rejectedEvents: auditLog.filter((entry) =>
         [
           EngineDecision.Rejected,

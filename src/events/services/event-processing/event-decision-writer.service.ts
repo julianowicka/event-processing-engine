@@ -25,6 +25,7 @@ export interface FinalDecisionInput {
   changedFields?: JsonObject;
   skippedFields?: JsonObject;
   processingTimeMs: number;
+  finalAttemptCount?: number;
 }
 
 @Injectable()
@@ -53,6 +54,9 @@ export class EventDecisionWriterService {
         processingStatus: ProcessingStatus.Done,
         availableAt: createdAt,
         lastErrorMessage: null,
+        ...(input.finalAttemptCount === undefined
+          ? {}
+          : { attempts: input.finalAttemptCount }),
       },
     );
 

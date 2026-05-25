@@ -172,7 +172,7 @@ export class OrderLifecycleApplicationService {
   private async rejectOrderNotReady(
     context: OrderEventHandlingContext,
   ): Promise<void> {
-    await this.decision.reject(
+    await this.decision.retryOrReject(
       context,
       ReasonCode.OrderNotReady,
       'Event requires an existing order',

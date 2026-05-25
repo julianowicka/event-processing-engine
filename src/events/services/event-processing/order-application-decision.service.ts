@@ -8,6 +8,9 @@ import {
 import { EventDecisionWriterService } from './event-decision-writer.service';
 import type { OrderEventHandlingContext } from './handlers/order-event-handler';
 
+const MAX_RETRYABLE_ATTEMPTS = 3;
+const RETRYABLE_DECISION_DELAY_MS = 60 * 60 * 1_000;
+
 @Injectable()
 export class OrderApplicationDecisionService {
   constructor(private readonly decisionWriter: EventDecisionWriterService) {}
@@ -37,6 +40,7 @@ export class OrderApplicationDecisionService {
     reasonCode: ReasonCode,
     reasonMessage: string,
     skippedFields: JsonObject = {},
+    finalAttemptCount?: number,
   ): Promise<void> {
     await this.decisionWriter.writeFinalDecision({
       manager: context.manager,
@@ -49,7 +53,35 @@ export class OrderApplicationDecisionService {
       changedFields: {},
       skippedFields,
       processingTimeMs: await context.getProcessingTimeMs(),
+      finalAttemptCount,
     });
+  }
+
+  async retryOrReject(
+    context: OrderEventHandlingContext,
+    reasonCode: ReasonCode,
+    reasonMessage: string,
+    skippedFields: JsonObject = {},
+  ): Promise<void> {
+    const attemptCount = context.delivery.attempts + 1;
+
+    if (attemptCount >= MAX_RETRYABLE_ATTEMPTS) {
+      await this.reject(
+        context,
+        reasonCode,
+        reasonMessage,
+        skippedFields,
+        attemptCount,
+      );
+      return;
+    }
+
+    await this.decisionWriter.markRetryableFailure(
+      context.manager,
+      context.delivery,
+      reasonMessage,
+      new Date(Date.now() + RETRYABLE_DECISION_DELAY_MS).toISOString(),
+    );
   }
 
   async rejectObsoleteStatus(
