@@ -36,8 +36,9 @@ architecture.
   raw delivery `id ASC`.
 - Events requiring a missing order retry after 10 seconds and are rejected with
   `ORDER_NOT_READY` after three unsuccessful attempts.
-- Technical failures retry after 10 seconds, up to `3` attempts, then produce
-  a final `FAILED` decision.
+- Technical failures retry after 10 seconds while retry attempts remain. When
+  the next technical processing attempt reaches the retry limit, the delivery
+  gets a final `FAILED` decision.
 - `EVENT_RETRY_DELAY_MS` configures the shared retry delay for both cases;
   Docker Compose deployments set it to `10000` ms.
 

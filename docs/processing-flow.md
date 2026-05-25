@@ -67,11 +67,15 @@ finally rejected with `ORDER_NOT_READY` on the third unsuccessful attempt.
 
 Only unexpected technical failures are retried.
 
-1. Increment `raw_incoming_events.attempts`.
-2. If attempts remain, set `processing_status = RETRY`, set `available_at` for
-   10 seconds later, and save `last_error_message`.
-3. If the retry limit is reached, set status to `DONE`, write a final `FAILED`
-   audit decision, and update stats.
+1. Calculate the next processing attempt as `attempts + 1`.
+2. If retry attempts remain, persist that value in
+   `raw_incoming_events.attempts`, set `processing_status = RETRY`, set
+   `available_at` for 10 seconds later, and save `last_error_message`.
+3. If the next processing attempt reaches the retry limit, set status to
+   `DONE`, write a final `FAILED` audit decision, save the error message, and
+   update stats. The final failed write does not increment `attempts` again;
+   the counter shows the number of prior retryable failures that were
+   rescheduled.
 
 Retry attempts are not audit decisions because the engine has not made a final
 business decision yet.

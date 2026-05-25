@@ -67,8 +67,10 @@ Fields:
 - `received_at`: insertion timestamp.
 - `processing_status`: `PENDING`, `RETRY`, or `DONE`.
 - `available_at`: when a pending or retryable item may be processed.
-- `attempts`: number of retryable processing attempts, including missing-order
-  retries and unexpected technical failures.
+- `attempts`: number of retryable processing attempts that were rescheduled.
+  Missing-order final rejection stores the final attempt count. For exhausted
+  unexpected technical failures, the final failure is represented by a `FAILED`
+  decision and the counter is not incremented again.
 - `last_error_message`: most recent retryable processing error or missing-order
   message.
 
@@ -211,7 +213,8 @@ The response calculates average time as
 
 When the technical retry limit is reached, one transaction marks the delivery
 `DONE`, writes a final `FAILED` audit decision with reason
-`PROCESSING_ERROR`, and increments rejected and processed statistics.
+`PROCESSING_ERROR`, stores the latest error message, and increments rejected and
+processed statistics.
 
 ## SQL Skeleton
 

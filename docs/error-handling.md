@@ -54,12 +54,14 @@ retryable because order creation may still arrive.
 Worker behavior:
 
 - Retry `ORDER_NOT_READY` 10 seconds later and reject it on attempt `3`.
-- Retry technical failures 10 seconds later, up to `3` attempts.
+- Retry technical failures 10 seconds later while retry attempts remain.
 - Keep failed-but-retryable deliveries `RETRY` until their next `available_at`.
-- After a technical failure reaches attempt `3`, finish the delivery with a
-  `FAILED` decision and its error message; its raw event snapshot remains
-  available from
-  `raw_incoming_events`.
+- When the next technical processing attempt reaches the retry limit, finish
+  the delivery with a `FAILED` decision and its error message; its raw event
+  snapshot remains available from `raw_incoming_events`.
+- For technical failures, `attempts` records retryable failures that were
+  rescheduled. The final exhausted failure is represented by the `FAILED`
+  decision instead of an additional persisted attempt increment.
 - Manual replay should require deliberate inspection.
 
 ## Reason Codes

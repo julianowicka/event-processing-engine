@@ -17,7 +17,7 @@ handlers focused on which events are allowed from that status.
 
 `NEW` is only an internal conceptual state before `ORDER_CREATED` is accepted.
 
-## Event Mapping
+## Successful Event Mapping
 
 - `ORDER_CREATED`: `NEW -> CREATED`.
 - `ORDER_UPDATED`: updates descriptive set-like fields, currently `amount` and
@@ -31,6 +31,12 @@ handlers focused on which events are allowed from that status.
 Events other than `ORDER_CREATED` for a missing order are retried before final
 `ORDER_NOT_READY` rejection. `ORDER_CREATED` for an existing order is rejected
 with `ORDER_ALREADY_EXISTS`.
+
+Events that are recognized by the engine but not allowed from the current
+state still get explicit audit decisions. For example,
+`PAYMENT_CAPTURED` succeeds only from `CREATED`; if another payment capture
+arrives after the order is already `PAID`, `PARTIALLY_REFUNDED`, or `REFUNDED`,
+the event is rejected with `PAYMENT_ALREADY_CAPTURED`.
 
 The assignment uses an `ORDER_UPDATED` payload containing `status: "PAID"` as
 an input example. In this design that field is accepted as input but is not
