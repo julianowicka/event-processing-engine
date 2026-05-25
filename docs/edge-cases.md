@@ -23,18 +23,16 @@ Action: store the raw delivery and write `UNKNOWN_EVENT_TYPE`.
 
 An update, payment, cancellation, or refund arrives for an unknown order.
 
-Decision: `REJECTED`.
+Decision: no final decision until the retry limit is reached.
 
-Action: write `ORDER_NOT_READY` and do not change state. This is an explicit
-scope choice: stale partial events for existing orders can be merged, but
-events requiring an order that has not been created are not retained for
-business replay.
+Action: keep the delivery as `RETRY` with `ORDER_NOT_READY` in its last error
+message and retry one hour later. Write final `REJECTED` after attempt `3` if
+the order still does not exist.
 
 ## Create After Earlier Rejected Event
 
-If an `ORDER_CREATED` event later creates the order, it does not reconsider a
-previously rejected delivery. The sender must submit a new event with a new
-`eventId` when the intended business action is still required.
+If an `ORDER_CREATED` event creates the order before a retry becomes available,
+the waiting delivery can be processed on its next scheduled attempt.
 
 ## Cancelled Order Receives Payment
 

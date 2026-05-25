@@ -20,7 +20,7 @@ architecture.
 - Local SQLite database file stored on disk.
 - Default path: `data/app.sqlite`.
 - Optional override: `SQLITE_DB_PATH`.
-- No ORM.
+- TypeORM with one initial migration and schema synchronization disabled.
 - No workflow engine.
 - No event-sourcing framework.
 
@@ -31,8 +31,9 @@ architecture.
   `raw_incoming_events`.
 - In-process `EventWorkerService` for background processing.
 - Worker interval defaults to `100` ms and can be changed with
-  `EVENT_ENGINE_WORKER_INTERVAL_MS`.
-- Events requiring a missing order are rejected with `ORDER_NOT_READY`.
+  `EVENT_PROCESSING_SCHEDULER_INTERVAL_MS`.
+- Events requiring a missing order retry after one hour and are rejected with
+  `ORDER_NOT_READY` after three unsuccessful attempts.
 - Technical failures retry up to `3` attempts, then move the delivery to
   `dead_letter_events`.
 

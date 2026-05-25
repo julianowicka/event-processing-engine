@@ -31,9 +31,8 @@ The primary design documents are:
 - Statistics: one `stats` row keeps required counters fast to read.
 - Dead letters: exhausted technical failures create a minimal
   `dead_letter_events` record.
-- Scope reduction: no business deferral, multi-worker locking, processing
-  lifecycle details in business API output, or diagnostic event endpoint is
-  required.
+- Scope reduction: no multi-worker locking is required; missing-order events
+  use a bounded hourly retry before final rejection.
 
 ## Target Flow
 

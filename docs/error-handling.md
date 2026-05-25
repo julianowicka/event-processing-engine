@@ -30,10 +30,9 @@ individual raw delivery:
 
 ## Missing Order
 
-If an otherwise valid event references an order that does not exist yet, the
-decision is final `REJECTED` with reason `ORDER_NOT_READY`. The chosen
-out-of-order strategy is field-level merging for existing orders, not business
-replay before creation.
+If an otherwise valid event references an order that does not exist yet, it is
+kept in `RETRY` and made available one hour later. After three unsuccessful
+attempts, the final decision is `REJECTED` with reason `ORDER_NOT_READY`.
 
 ## Failure Safety
 
@@ -46,12 +45,14 @@ service commits only after a mutation completes successfully.
 - Worker failures update only processing lifecycle fields on
   `raw_incoming_events`; its `raw_event_json` snapshot is immutable.
 
-Business decisions are final and are not retried.
+Business decisions are final except for `ORDER_NOT_READY`, which is explicitly
+retryable because order creation may still arrive.
 
 ## Retry And Dead Letter Policy
 
 Target worker behavior:
 
+- Retry `ORDER_NOT_READY` one hour later and reject it on attempt `3`.
 - Retry technical failures up to `3` attempts.
 - Keep failed-but-retryable deliveries `RETRY` until their next `available_at`.
 - After attempt `3`, move the delivery to a dead-letter queue with an error

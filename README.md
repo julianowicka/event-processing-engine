@@ -12,14 +12,13 @@ statistics.
 - Persistence: TypeORM 1 with `better-sqlite3` and a local SQLite database file.
 - Default database path: `data/app.sqlite`.
 - Database override: `SQLITE_DB_PATH=/absolute/path/app.sqlite`.
-- Schema: versioned TypeORM migrations; schema synchronization is disabled.
+- Schema: one initial TypeORM migration; schema synchronization is disabled.
 - `POST /events` is ingestion-only and returns queued results.
-- `raw_incoming_events` is an insert-only raw delivery log.
-- `event_processing_jobs` is the technical queue/status table.
-- `EventWorkerService` processes pending and deferred jobs.
+- `raw_incoming_events` stores raw deliveries and their technical queue status.
+- The processing scheduler processes pending and retryable events.
 - Deduplication is enforced through `processed_event_keys.event_id`.
-- Raw deliveries, processing jobs, order state, history, audit decisions, stats,
-  and DLQ records are stored in SQLite tables.
+- Raw deliveries, order state, history, audit decisions, stats, and DLQ records
+  are stored in SQLite tables.
 
 Detailed design documents live in [docs](./docs/README.md).
 
@@ -42,7 +41,7 @@ Services:
 
 - API: `http://localhost:3100/api`
 - Frontend: `http://localhost:8080`
-- SQLite file in the `database-data` Docker volume at `/data/app.sqlite`
+- SQLite file bind-mounted from local `./data/app.sqlite` to `/data/app.sqlite`
 
 Verbose worker tracing can be enabled for debugging:
 
@@ -82,8 +81,8 @@ By default the API writes to `data/app.sqlite`. Override it with:
 SQLITE_DB_PATH=/absolute/path/app.sqlite yarn start:dev
 ```
 
-Migrations run automatically when the application connects. They can also be
-inspected or run explicitly:
+The single initial migration runs automatically when the application connects
+to a new database. It can also be inspected or run explicitly:
 
 ```bash
 yarn migration:show
@@ -91,8 +90,11 @@ yarn migration:run
 yarn migration:revert
 ```
 
-The initial TypeORM migration treats any database from the previous raw-SQL
-implementation as disposable and recreates the application tables.
+This version deliberately does not migrate earlier database layouts. When
+upgrading a local checkout created before the single-migration schema, stop the
+containers, delete `data/app.sqlite`, `data/app.sqlite-wal`, and
+`data/app.sqlite-shm` if present, then start the application again. This reset
+permanently removes local event and order history.
 
 ## Business API
 

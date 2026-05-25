@@ -1,8 +1,6 @@
 # Database - Simplified Target Design
 
-This document describes the simplified target persistence model for the
-recruitment task. The current application code has not yet been refactored to
-this schema.
+This document describes the persistence model used by the application.
 
 The target keeps the valuable parts of the existing design:
 
@@ -28,9 +26,9 @@ Override:
 
 - `SQLITE_DB_PATH=/absolute/path/database.sqlite`
 
-The persistence layer should:
+The persistence layer:
 
-- create the schema at startup with idempotent DDL;
+- creates a new database from one initial TypeORM migration at startup;
 - append deliveries during `POST /events`;
 - process pending deliveries later in a worker;
 - wrap one processing outcome, including state, audit, and stats updates, in a
@@ -355,7 +353,7 @@ This target intentionally assumes one background worker. Multi-worker claim
 locking would require additional lifecycle columns or another durable claiming
 mechanism.
 
-The target also drops business deferral. An event that requires an order before
-an `ORDER_CREATED` event has been applied is rejected with a clear reason.
-Out-of-order partial updates for an existing order still use field-level merge
-rules through `order_field_versions`.
+An event that requires an order before an `ORDER_CREATED` event has been applied
+is retried one hour later and rejected after three unsuccessful processing
+attempts. Out-of-order partial updates for an existing order still use
+field-level merge rules through `order_field_versions`.

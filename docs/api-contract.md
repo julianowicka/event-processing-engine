@@ -153,5 +153,5 @@ Returns the required precomputed statistics:
   `ORDER_UPDATED` payload is not applied; any applicable descriptive fields
   from the same event may still be partially applied and the skipped status is
   recorded in the audit decision.
-- An event that requires a missing order is rejected; automatic business
-  deferral is not part of the simplified target.
+- An event that requires a missing order stays retryable for up to three
+  attempts, scheduled one hour apart, before final rejection.
