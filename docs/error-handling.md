@@ -21,7 +21,8 @@ individual raw delivery:
 - Unsupported event type.
 - Invalid timestamp.
 - Invalid payload shape.
-- Invalid money or currency field.
+- Missing or non-positive payment/refund amount where the lifecycle event
+  requires one.
 - Forbidden state transition.
 - Obsolete field update.
 - Lifecycle status supplied through `ORDER_UPDATED`.
@@ -50,13 +51,14 @@ retryable because order creation may still arrive.
 
 ## Retry Policy
 
-Target worker behavior:
+Worker behavior:
 
 - Retry `ORDER_NOT_READY` 10 seconds later and reject it on attempt `3`.
 - Retry technical failures 10 seconds later, up to `3` attempts.
 - Keep failed-but-retryable deliveries `RETRY` until their next `available_at`.
-- After attempt `3`, finish the delivery with a `FAILED` decision and its error
-  message; its raw event snapshot remains available from
+- After a technical failure reaches attempt `3`, finish the delivery with a
+  `FAILED` decision and its error message; its raw event snapshot remains
+  available from
   `raw_incoming_events`.
 - Manual replay should require deliberate inspection.
 
@@ -72,7 +74,6 @@ Stable reason codes:
 - `ORDER_NOT_READY`
 - `ORDER_ALREADY_EXISTS`
 - `FORBIDDEN_TRANSITION`
-- `STATUS_REQUIRES_DOMAIN_EVENT`
 - `OBSOLETE_EVENT`
 - `OBSOLETE_FIELD`
 - `NO_APPLICABLE_CHANGES`

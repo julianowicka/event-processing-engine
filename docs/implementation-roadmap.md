@@ -1,9 +1,9 @@
-# Implementation Roadmap
+# Implementation Notes
 
-The roadmap is scoped to a 6-10 hour recruitment implementation with a working
-fragment preferred over an overbuilt design.
+This file records what the current implementation includes and what remains a
+later enhancement.
 
-## Target MVP
+## Implemented MVP
 
 - SQLite file persistence on disk.
 - Immutable raw event snapshots with processing lifecycle metadata on
@@ -17,13 +17,14 @@ fragment preferred over an overbuilt design.
 - Field-level merge for set-like fields.
 - Cumulative payment/refund behavior.
 - Lifecycle status transitions owned by domain events, not `ORDER_UPDATED`.
-- Missing-order events rejected; stale fields for existing orders merged.
-- `POST /events`: ingest and return stored delivery ids.
+- Missing-order events retried and then rejected; stale fields for existing
+  orders merged.
+- `POST /api/events`: ingest and return queued delivery results.
 - Background worker: process available `PENDING` and `RETRY` deliveries.
 - Retry metadata and final failed decisions for technical worker failures.
-- `GET /orders/:id`: current state, history, rejected events, and audit log.
-- `GET /stats`: required counters and processing time.
-- `GET /health`: operational health endpoint.
+- `GET /api/orders/:id`: current state, history, rejected events, and audit log.
+- `GET /api/stats`: required counters and processing time.
+- `GET /api/health`: operational health endpoint.
 - README with assumptions, run commands, and API examples.
 - Focused Jest and e2e tests for critical business behavior.
 

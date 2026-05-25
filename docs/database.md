@@ -1,8 +1,8 @@
-# Database - Simplified Target Design
+# Database
 
 This document describes the persistence model used by the application.
 
-The target keeps the valuable parts of the existing design:
+The current schema keeps the important parts of the design:
 
 - ingestion and processing happen separately;
 - every raw delivery remains available;
@@ -11,8 +11,7 @@ The target keeps the valuable parts of the existing design:
 - stale partial updates can be merged per field;
 - exhausted technical failures are visible as final failed decisions.
 
-It removes tables and columns that are not needed to demonstrate those
-requirements.
+Tables and columns not needed for the current single-worker MVP are omitted.
 
 ## Persistence Boundary
 
@@ -29,14 +28,14 @@ Override:
 The persistence layer:
 
 - creates or upgrades a database through TypeORM migrations at startup;
-- append deliveries during `POST /events`;
+- append deliveries during `POST /api/events`;
 - process pending deliveries later in a worker;
 - wrap one processing outcome, including state, audit, and stats updates, in a
   transaction.
 
-## Target Schema
+## Current Schema
 
-The target schema has six tables:
+The schema has six tables:
 
 | Table | Responsibility |
 | --- | --- |
@@ -45,7 +44,7 @@ The target schema has six tables:
 | `orders` | Current materialized order state |
 | `order_field_versions` | Field-level timestamp metadata for stale-event merging |
 | `event_decisions` | Explicit audit log and history source |
-| `stats` | Precomputed counters for fast `GET /stats` |
+| `stats` | Precomputed counters for fast `GET /api/stats` |
 
 The raw event content remains immutable after insertion. Only its technical
 processing fields are updated by the worker. This is sufficient for a small
@@ -68,8 +67,10 @@ Fields:
 - `received_at`: insertion timestamp.
 - `processing_status`: `PENDING`, `RETRY`, or `DONE`.
 - `available_at`: when a pending or retryable item may be processed.
-- `attempts`: number of unexpected technical failures.
-- `last_error_message`: most recent unexpected technical error.
+- `attempts`: number of retryable processing attempts, including missing-order
+  retries and unexpected technical failures.
+- `last_error_message`: most recent retryable processing error or missing-order
+  message.
 
 Fields removed from the current model:
 
@@ -187,8 +188,8 @@ Fields deliberately omitted:
 
 ### `stats`
 
-Stores one aggregate row so `GET /stats` is constant-time and does not scan the
-audit log.
+Stores one aggregate row so `GET /api/stats` is constant-time and does not scan
+the audit log.
 
 Fields:
 
@@ -212,11 +213,10 @@ When the technical retry limit is reached, one transaction marks the delivery
 `DONE`, writes a final `FAILED` audit decision with reason
 `PROCESSING_ERROR`, and increments rejected and processed statistics.
 
-## Target SQL Skeleton
+## SQL Skeleton
 
 ```sql
 PRAGMA foreign_keys = ON;
-PRAGMA journal_mode = WAL;
 
 CREATE TABLE IF NOT EXISTS raw_incoming_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -321,9 +321,9 @@ INSERT OR IGNORE INTO stats (id, updated_at)
 
 ## Scope Trade-Offs
 
-This target intentionally assumes one background worker. Multi-worker claim
-locking would require additional lifecycle columns or another durable claiming
-mechanism.
+The implementation intentionally assumes one background scheduler. Multi-worker
+claim locking would require additional lifecycle columns or another durable
+claiming mechanism.
 
 An event that requires an order before an `ORDER_CREATED` event has been applied
 is retried 10 seconds later and rejected after three unsuccessful processing

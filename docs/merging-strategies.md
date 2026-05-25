@@ -63,5 +63,8 @@ status field is recorded as skipped.
 The public API accepts decimal money values, for example `199.99`. The engine
 stores them as integer minor units, for example `19999`.
 
-Accepted money fields must be non-negative decimals with at most two fractional
-digits. Refund and payment event amounts must be positive.
+The current implementation reads finite numeric values and stores
+`Math.round(value * 100)`. `ORDER_CREATED` and `ORDER_UPDATED` accept
+non-negative amounts. `PAYMENT_CAPTURED` and `REFUND_ISSUED` require positive
+amounts; otherwise they are rejected with the corresponding required-amount
+reason.

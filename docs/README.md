@@ -1,7 +1,7 @@
 # Event Processing Engine Architecture
 
-This folder contains the target design documentation for the order event
-processing recruitment task.
+This folder contains documentation for the implemented order event processing
+engine.
 
 The primary design documents are:
 
@@ -9,13 +9,14 @@ The primary design documents are:
 - [Database](./database.md)
 - [Processing Flow](./processing-flow.md)
 
-## Target Decisions
+## Current Decisions
 
-- Runtime: Node.js with TypeScript.
+- Runtime: Node.js 24.11+ with TypeScript.
 - Framework: NestJS with the Express adapter.
 - Storage: a local SQLite database file.
-- Ingestion: `POST /events` persists every raw delivery and returns promptly.
-- Processing: a single background worker processes stored deliveries later.
+- Ingestion: `POST /api/events` persists every raw delivery and returns queued
+  results promptly.
+- Processing: a single background scheduler processes stored deliveries later.
 - Inbox lifecycle: retry/status metadata is kept on `raw_incoming_events`;
   input JSON remains unchanged after insertion.
 - Audit: `event_decisions` explicitly records one final engine outcome per
@@ -33,20 +34,20 @@ The primary design documents are:
 - Scope reduction: no multi-worker locking is required; missing-order events
   use a bounded 10-second retry before final rejection.
 
-## Target Flow
+## Current Flow
 
 ```mermaid
 flowchart LR
-    A["POST /events"] --> B["raw_incoming_events (PENDING)"]
-    B --> C["Return received ids"]
-    B --> D["Background worker"]
+    A["POST /api/events"] --> B["raw_incoming_events (PENDING)"]
+    B --> C["Return queued results"]
+    B --> D["Background scheduler"]
     D --> E["Validate and deduplicate"]
     E --> F["State machine and field merge"]
     F --> G["orders and order_field_versions"]
     F --> H["event_decisions and stats"]
-    G --> J["GET /orders/:id"]
+    G --> J["GET /api/orders/:id"]
     H --> J
-    H --> K["GET /stats"]
+    H --> K["GET /api/stats"]
 ```
 
 ## Supporting Documents

@@ -29,7 +29,7 @@ Action: keep the delivery as `RETRY` with `ORDER_NOT_READY` in its last error
 message and retry 10 seconds later. Write final `REJECTED` after attempt `3` if
 the order still does not exist.
 
-## Create After Earlier Rejected Event
+## Create After Earlier Retryable Event
 
 If an `ORDER_CREATED` event creates the order before a retry becomes available,
 the waiting delivery can be processed on its next scheduled attempt.
@@ -48,8 +48,9 @@ Action: preserve `CANCELLED` state and audit `FORBIDDEN_TRANSITION`.
 
 Decision: `REJECTED`.
 
-Action: do not change order state and audit the missing captured payment or
-missing order reason.
+Action: if the order does not exist, retry and eventually reject with
+`ORDER_NOT_READY`; if the order exists in `CREATED`, preserve state and audit
+`FORBIDDEN_TRANSITION`.
 
 ## Partial Refund
 
@@ -98,5 +99,5 @@ Decision: `PARTIALLY_APPLIED` if the amount is applicable; otherwise
 `REJECTED`.
 
 Action: apply a current `amountMinor` change but skip `status` with reason
-`STATUS_REQUIRES_DOMAIN_EVENT`. A later `PAYMENT_CAPTURED` event is required to
-move the order to `PAID` and record `paidAmountMinor`.
+`FORBIDDEN_TRANSITION`. A later `PAYMENT_CAPTURED` event is required to move
+the order to `PAID` and record `paidAmountMinor`.

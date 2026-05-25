@@ -1,11 +1,11 @@
-# Processing Flow - Simplified Target Design
+# Processing Flow
 
-This target keeps asynchronous processing and uses the raw inbox row itself as
-the durable work item.
+The implementation keeps asynchronous processing and uses the raw inbox row
+itself as the durable work item.
 
 ## Phase 1: Ingestion
 
-`POST /events` does as little as possible:
+`POST /api/events` does as little as possible:
 
 1. Validate that the request body is a JSON array.
 2. Insert every item into `raw_incoming_events` in request order.
@@ -13,15 +13,19 @@ the durable work item.
    they can be extracted.
 4. Set `processing_status = PENDING`, `attempts = 0`, and `available_at` to the
    current time.
-5. Commit and return the stored delivery ids.
+5. Commit and return `mode: "ASYNC_WORKER"`, one queued result per stored
+   delivery, and `summary.queued`.
 
 Malformed items are still stored. The input snapshot in `raw_event_json` is
 never rewritten.
 
 ## Phase 2: Worker Processing
 
-A single background worker selects the next row with status `PENDING` or
-`RETRY` whose `available_at` has arrived, ordered by delivery id.
+`EventProcessingSchedulerService` runs once on module initialization and then
+on an interval. It selects rows with status `PENDING` or `RETRY`, orders them by
+`event_timestamp ASC NULLS LAST` and then `id ASC`, filters out rows whose
+`available_at` is still in the future, and processes the available rows one by
+one. An in-process guard prevents overlapping scheduler ticks.
 
 For each delivery:
 
@@ -54,9 +58,10 @@ Order history is the set of accepted or partially applied decisions; a separate
 
 This is the chosen strategy for stale partial updates on an existing order.
 
-An event that cannot be evaluated because its order does not yet exist is
-rejected with an explicit reason. The simplified target does not retry business
-ordering cases such as payment arriving before order creation.
+An event that requires an order and arrives before `ORDER_CREATED` is not given
+a final audit decision immediately. It is marked `RETRY` with
+`ORDER_NOT_READY`, becomes available after the configured retry delay, and is
+finally rejected with `ORDER_NOT_READY` on the third unsuccessful attempt.
 
 ## Technical Retries
 
@@ -73,7 +78,6 @@ business decision yet.
 
 ## Intentional Scope
 
-The simplified target supports one worker process. It does not include worker
-lock ownership, pending-delivery API output, or business deferral. These
-features are outside the recruitment-task requirements and can be added later
-if needed.
+The implementation supports one worker process. It does not include durable
+worker lock ownership. Pending delivery lifecycle is still observable through
+`GET /api/orders/:id` and the diagnostic `GET /api/events/:eventId` endpoint.

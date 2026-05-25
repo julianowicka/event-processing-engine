@@ -3,9 +3,9 @@
 The order status state machine is explicit and small. It prevents impossible
 business transitions such as `CANCELLED -> PAID`.
 
-The target design uses an explicit dispatcher with one handler strategy for each
-supported event type. Shared transition and merge policy services keep the
-individual handlers focused on the rule for their event.
+The implementation uses an explicit dispatcher with one handler strategy for
+each current order status. Shared application services keep the individual
+handlers focused on which events are allowed from that status.
 
 ## States
 
@@ -21,11 +21,16 @@ individual handlers focused on the rule for their event.
 
 - `ORDER_CREATED`: `NEW -> CREATED`.
 - `ORDER_UPDATED`: updates descriptive set-like fields, currently `amount` and
-  `currency`; it does not change lifecycle status.
+  `currency`; it does not change lifecycle status and can run against existing
+  orders in any persisted status.
 - `PAYMENT_CAPTURED`: `CREATED -> PAID`.
 - `ORDER_CANCELLED`: `CREATED -> CANCELLED`.
 - `REFUND_ISSUED`: `PAID -> PARTIALLY_REFUNDED | REFUNDED`.
 - `REFUND_ISSUED`: `PARTIALLY_REFUNDED -> PARTIALLY_REFUNDED | REFUNDED`.
+
+Events other than `ORDER_CREATED` for a missing order are retried before final
+`ORDER_NOT_READY` rejection. `ORDER_CREATED` for an existing order is rejected
+with `ORDER_ALREADY_EXISTS`.
 
 The assignment uses an `ORDER_UPDATED` payload containing `status: "PAID"` as
 an input example. In this design that field is accepted as input but is not
@@ -38,15 +43,16 @@ fields, those fields can be applied and the ignored status is included in a
 ## Forbidden Examples
 
 - `CANCELLED -> PAID`
-- `REFUNDED -> PAID`
 - `NEW -> PAID`
 - `CANCELLED -> REFUNDED`
 - direct `ORDER_UPDATED` to any different lifecycle status
+- repeated `PAYMENT_CAPTURED` after a payment was already captured
 
 ## Financial Notes
 
-`PAYMENT_CAPTURED` captures a positive amount. If no amount is provided, the
-current order amount is used.
+`PAYMENT_CAPTURED` requires a positive `amount` and sets
+`paidAmountMinor`. A second payment capture is rejected with
+`PAYMENT_ALREADY_CAPTURED`.
 
-`REFUND_ISSUED` requires a positive amount or `refundAmount`. The refund amount
-is cumulative and cannot exceed the captured payment amount.
+`REFUND_ISSUED` requires a positive `refundAmount` or `amount`. The refund
+amount is cumulative and cannot exceed the remaining captured payment amount.

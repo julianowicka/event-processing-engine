@@ -1,22 +1,20 @@
-# API Contract - Simplified Target Design
+# API Contract
 
-This document describes the target contract for the recruitment-task version.
+This document describes the contract implemented by the current code.
 
-The API is asynchronous from the caller's perspective: `POST /events` stores
+The API is asynchronous from the caller's perspective: `POST /api/events` stores
 raw deliveries and returns immediately, and a background worker later records
 decisions and updates order state.
 
-## Required Endpoints
+## Implemented Endpoints
 
-- `POST /events`
-- `GET /orders/:id`
-- `GET /stats`
+- `POST /api/events`
+- `GET /api/events/:eventId`
+- `GET /api/orders/:id`
+- `GET /api/stats`
+- `GET /api/health`
 
-Operational endpoints such as `GET /health` may remain, but diagnostic event
-inspection and processing-lifecycle output are outside the recruitment-task
-scope.
-
-## `POST /events`
+## `POST /api/events`
 
 Accepts a JSON array. Every array item is persisted in `raw_incoming_events`,
 including malformed items and duplicate deliveries. Validation and business
@@ -43,17 +41,32 @@ Response:
 
 ```json
 {
-  "received": 1,
-  "incomingEventIds": [1]
+  "mode": "ASYNC_WORKER",
+  "results": [
+    {
+      "incomingEventId": 1,
+      "eventId": "evt-1001",
+      "orderId": "ord-501",
+      "type": "ORDER_CREATED",
+      "status": "QUEUED",
+      "reasonCode": null,
+      "reasonMessage": "Queued for asynchronous processing",
+      "processingTimeMs": 0
+    }
+  ],
+  "summary": {
+    "queued": 1
+  }
 }
 ```
 
-The API does not expose internal processing lifecycle fields because they
-belong to each stored delivery in the simplified schema.
+If the request body is not an array, the controller rejects the whole request
+with a standard NestJS `400` response.
 
-The API is eventually consistent. A successful `POST /events` confirms durable
-acceptance for later processing; `GET /orders/:id` and `GET /stats` reflect only
-deliveries already finalized by the background worker.
+The API is eventually consistent. A successful `POST /api/events` confirms
+durable acceptance for later processing; `GET /api/orders/:id` and
+`GET /api/stats` reflect only deliveries already finalized by the background
+scheduler.
 
 ## Worker Decisions
 
@@ -69,42 +82,69 @@ Every delivery eventually receives one final audit decision:
 
 Retries before the final result are lifecycle metadata, not audit decisions.
 
-## `GET /orders/:id`
+## `GET /api/orders/:id`
 
-After an order creation and a payment delivery have been finalized, the
-endpoint returns the information requested by the assignment:
+After an order creation has been finalized, the endpoint returns the
+information requested by the assignment:
 
 ```json
 {
   "orderId": "ord-501",
   "currentState": {
-    "status": "PAID",
+    "orderId": "ord-501",
+    "status": "CREATED",
     "amountMinor": 19999,
     "currency": "PLN",
-    "paidAmountMinor": 19999,
-    "refundedAmountMinor": 0
+    "paidAmountMinor": 0,
+    "refundedAmountMinor": 0,
+    "createdAt": "2026-01-01T12:00:00.000Z",
+    "updatedAt": "2026-01-01T12:00:00.000Z"
   },
   "history": [
     {
+      "id": 1,
       "eventId": "evt-1001",
+      "type": "ORDER_CREATED",
+      "timestamp": 1710000900,
+      "processedAt": "2026-01-01T12:00:00.000Z",
+      "fromStatus": null,
+      "toStatus": "CREATED",
       "decision": "ACCEPTED",
+      "reasonCode": "APPLIED",
       "changedFields": {
         "status": "CREATED",
         "amountMinor": 19999,
         "currency": "PLN"
-      }
-    },
-    {
-      "eventId": "evt-1002",
-      "decision": "ACCEPTED",
-      "changedFields": {
-        "status": "PAID",
-        "paidAmountMinor": 19999
-      }
+      },
+      "skippedFields": {},
+      "createdAt": "2026-01-01T12:00:00.000Z"
     }
   ],
   "rejectedEvents": [],
-  "auditLog": []
+  "pendingJobs": [],
+  "auditLog": [
+    {
+      "id": 1,
+      "rawIncomingEventId": 1,
+      "eventId": "evt-1001",
+      "orderId": "ord-501",
+      "type": "ORDER_CREATED",
+      "timestamp": 1710000900,
+      "decision": "ACCEPTED",
+      "reasonCode": "APPLIED",
+      "reasonMessage": "Event was applied",
+      "fromStatus": null,
+      "toStatus": "CREATED",
+      "changedFields": {
+        "status": "CREATED",
+        "amountMinor": 19999,
+        "currency": "PLN"
+      },
+      "skippedFields": {},
+      "processingTimeMs": 1,
+      "createdAt": "2026-01-01T12:00:00.000Z"
+    }
+  ]
 }
 ```
 
@@ -112,13 +152,20 @@ History is produced from `event_decisions` rows with decision `ACCEPTED` or
 `PARTIALLY_APPLIED`; there is no separate history table.
 
 Rejected events include `REJECTED`, `DUPLICATE`, and `FAILED` decisions with
-their reason codes and messages. The full audit log may be returned as a useful
-addition to the minimum assignment response.
+their reason codes and messages. `pendingJobs` contains raw deliveries for the
+same `orderId` that are still `PENDING` or `RETRY`.
 
-Pending delivery state and retry information are intentionally not part of this
-business endpoint.
+If the order has no current state, no audit decisions, and no pending jobs, the
+endpoint returns `404`.
 
-## `GET /stats`
+## `GET /api/events/:eventId`
+
+This diagnostic endpoint is used by the bundled frontend. It returns all raw
+deliveries with the requested external `eventId`, their processing lifecycle,
+final decisions, and history entries derived from accepted or partially applied
+decisions. It returns `404` when no raw delivery has that `eventId`.
+
+## `GET /api/stats`
 
 Returns exactly the four required precomputed statistics:
 

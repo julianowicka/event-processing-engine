@@ -4,16 +4,19 @@ The MVP is designed for a single local Node.js process and one SQLite database
 file. This is appropriate for the recruitment task and keeps the behavior easy
 to inspect.
 
-## Target Strategy
+## Current Strategy
 
-- `POST /events` performs ingestion only and returns stored delivery ids.
-- `EventWorkerService` processes available deliveries in the background.
-- Database writes are performed by `SqliteService`.
-- The service runs related mutations inside explicit SQLite transactions.
+- `POST /api/events` performs ingestion only and returns queued delivery
+  results.
+- `EventProcessingSchedulerService` processes available deliveries in the
+  background.
+- Database writes are performed through TypeORM repositories.
+- `DatabaseService` runs related mutations inside explicit transactions.
 - `raw_incoming_events.raw_event_json` is immutable after ingestion.
 - `raw_incoming_events` also stores processing status, retry metadata, and
   availability time.
-- Processing order is raw delivery `id ASC`.
+- Processing order is `eventTimestamp ASC NULLS LAST`, then raw delivery
+  `id ASC`.
 
 This MVP should not be horizontally scaled without worker claiming. The worker
 uses an in-process running guard so two ticks in the same process do not process

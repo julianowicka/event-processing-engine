@@ -14,9 +14,11 @@ statistics.
 - Database override: `SQLITE_DB_PATH=/absolute/path/app.sqlite`.
 - Retry delay: `EVENT_RETRY_DELAY_MS=10000` (applies to all retries).
 - Schema: TypeORM migrations; schema synchronization is disabled.
-- `POST /events` is ingestion-only and returns queued results.
+- `POST /api/events` is ingestion-only and returns `mode`, queued `results`,
+  and a `summary`.
 - `raw_incoming_events` stores raw deliveries and their technical queue status.
-- The processing scheduler processes pending and retryable events.
+- The processing scheduler processes pending and retryable events by
+  `eventTimestamp ASC NULLS LAST`, then raw delivery `id ASC`.
 - Deduplication is enforced through `processed_event_keys.event_id`.
 - Raw deliveries, order state, history, audit decisions, and stats are stored in
   SQLite tables.
