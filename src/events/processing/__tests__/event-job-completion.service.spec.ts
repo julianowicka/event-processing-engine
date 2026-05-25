@@ -1,3 +1,4 @@
+import { Test } from '@nestjs/testing';
 import { SqliteService } from '../../../database/sqlite.service';
 import {
   EngineDecision,
@@ -43,9 +44,9 @@ describe('EventJobCompletionService', () => {
   let service: EventJobCompletionService;
   const decisionService = new EventDecisionService();
 
-  beforeEach(() => {
+  beforeEach(async () => {
     sqliteService = {
-      transaction: jest.fn((action: () => unknown) => action()),
+      transaction: jest.fn((action: () => void) => action()),
     };
     jobRepository = {
       markFinalDecision: jest.fn(),
@@ -60,25 +61,30 @@ describe('EventJobCompletionService', () => {
       upsertFieldVersion: jest.fn(),
     };
     auditRepository = {
-      writeDecision: jest.fn((_input: unknown) => ({ decisionId: 17 })),
+      writeDecision: jest.fn(() => ({ decisionId: 17 })),
       updateFinalStats: jest.fn(),
       writeHistory: jest.fn(),
       insertDeadLetterEvent: jest.fn(),
     };
     validationService = {
-      partialEventFromJob: jest.fn((_job: unknown) => ({
+      partialEventFromJob: jest.fn(() => ({
         eventId: job().event_id ?? undefined,
       })),
     };
 
-    service = new EventJobCompletionService(
-      sqliteService as unknown as SqliteService,
-      jobRepository as unknown as EventJobRepository,
-      orderRepository as unknown as OrderRepository,
-      auditRepository as unknown as EventAuditRepository,
-      validationService as unknown as EventValidationService,
-      decisionService,
-    );
+    const module = await Test.createTestingModule({
+      providers: [
+        EventJobCompletionService,
+        { provide: SqliteService, useValue: sqliteService },
+        { provide: EventJobRepository, useValue: jobRepository },
+        { provide: OrderRepository, useValue: orderRepository },
+        { provide: EventAuditRepository, useValue: auditRepository },
+        { provide: EventValidationService, useValue: validationService },
+        { provide: EventDecisionService, useValue: decisionService },
+      ],
+    }).compile();
+
+    service = module.get(EventJobCompletionService);
   });
 
   it('persists accepted order creation and releases deferred jobs', () => {

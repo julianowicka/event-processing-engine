@@ -19,6 +19,21 @@ const emptyEventHistory = document.querySelector('#emptyEventHistory');
 const eventDecisionsTable = document.querySelector('#eventDecisionsTable');
 const emptyEventDecisions = document.querySelector('#emptyEventDecisions');
 const eventInspectorOutput = document.querySelector('#eventInspectorOutput');
+const orderLookupInput = document.querySelector('#orderLookupInput');
+const inspectOrderButton = document.querySelector('#inspectOrderButton');
+const inspectFirstOrderButton = document.querySelector(
+  '#inspectFirstOrderButton',
+);
+const orderSummary = document.querySelector('#orderSummary');
+const orderHistoryTable = document.querySelector('#orderHistoryTable');
+const emptyOrderHistory = document.querySelector('#emptyOrderHistory');
+const orderRejectedTable = document.querySelector('#orderRejectedTable');
+const emptyOrderRejected = document.querySelector('#emptyOrderRejected');
+const orderPendingTable = document.querySelector('#orderPendingTable');
+const emptyOrderPending = document.querySelector('#emptyOrderPending');
+const orderAuditTable = document.querySelector('#orderAuditTable');
+const emptyOrderAudit = document.querySelector('#emptyOrderAudit');
+const orderInspectorOutput = document.querySelector('#orderInspectorOutput');
 
 let activeScenario = null;
 let payloadEditedManually = false;
@@ -322,6 +337,8 @@ function setBusy(isBusy) {
   refreshButton.disabled = isBusy;
   inspectEventButton.disabled = isBusy;
   inspectFirstButton.disabled = isBusy;
+  inspectOrderButton.disabled = isBusy;
+  inspectFirstOrderButton.disabled = isBusy;
 }
 
 function setScenario(name) {
@@ -401,7 +418,7 @@ async function sendBatch() {
     lastRunStatus.textContent =
       processedDelta >= response.summary.queued ? 'Processed' : 'Queued';
 
-    await inspectFirstQueuedEvent();
+    await Promise.all([inspectFirstQueuedEvent(), inspectFirstQueuedOrder()]);
   } catch (error) {
     lastQueuedResults = [];
     renderResults([]);
@@ -472,24 +489,39 @@ function renderResults(results) {
     const cells = row.querySelectorAll('td');
     cells[0].textContent = String(result.incomingEventId);
     cells[1].textContent = String(result.processingJobId);
-    if (result.eventId) {
-      const eventButton = document.createElement('button');
-      eventButton.className = 'link-button';
-      eventButton.type = 'button';
-      eventButton.textContent = result.eventId;
-      eventButton.addEventListener('click', () => {
-        eventLookupInput.value = result.eventId;
-        void inspectEvent(result.eventId);
-      });
-      cells[2].append(eventButton);
-    } else {
-      cells[2].textContent = '-';
-    }
-    cells[3].textContent = result.orderId || '-';
+    renderInspectorLink(
+      cells[2],
+      result.eventId,
+      eventLookupInput,
+      inspectEvent,
+    );
+    renderInspectorLink(
+      cells[3],
+      result.orderId,
+      orderLookupInput,
+      inspectOrder,
+    );
     cells[4].textContent = result.type || '-';
 
     resultsTable.append(row);
   }
+}
+
+function renderInspectorLink(cell, id, lookupInput, inspect) {
+  if (!id) {
+    cell.textContent = '-';
+    return;
+  }
+
+  const button = document.createElement('button');
+  button.className = 'link-button';
+  button.type = 'button';
+  button.textContent = id;
+  button.addEventListener('click', () => {
+    lookupInput.value = id;
+    void inspect(id);
+  });
+  cell.append(button);
 }
 
 function renderResponse(value) {
@@ -527,16 +559,20 @@ async function inspectEvent(eventId = eventLookupInput.value.trim()) {
 }
 
 function renderEventInspector(details) {
-  eventDeliveriesTable.innerHTML = '';
-  eventHistoryTable.innerHTML = '';
-  eventDecisionsTable.innerHTML = '';
+  clearTableBodies(
+    eventDeliveriesTable,
+    eventHistoryTable,
+    eventDecisionsTable,
+  );
   eventInspectorOutput.textContent = JSON.stringify(details || {}, null, 2);
 
   if (!details || details.error) {
     eventSummary.innerHTML = '<span>No event loaded.</span>';
-    emptyEventDeliveries.hidden = false;
-    emptyEventHistory.hidden = false;
-    emptyEventDecisions.hidden = false;
+    showEmptyStates(
+      emptyEventDeliveries,
+      emptyEventHistory,
+      emptyEventDecisions,
+    );
     return;
   }
 
@@ -565,50 +601,192 @@ function renderEventInspector(details) {
 }
 
 function renderEventDeliveries(deliveries) {
-  emptyEventDeliveries.hidden = deliveries.length > 0;
-
-  for (const delivery of deliveries) {
-    const row = document.createElement('tr');
-    const latest = delivery.processingJob?.latestDecision;
-    appendCells(row, [
-      String(delivery.rawIncomingEventId),
-      delivery.processingJob ? String(delivery.processingJob.id) : '-',
-      delivery.processingJob?.status || '-',
-      latest?.decision || '-',
-      latest?.reasonCode || '-',
-    ]);
-    eventDeliveriesTable.append(row);
-  }
+  renderTableRows(
+    eventDeliveriesTable,
+    emptyEventDeliveries,
+    deliveries,
+    (delivery) => {
+      const latest = delivery.processingJob?.latestDecision;
+      return [
+        String(delivery.rawIncomingEventId),
+        delivery.processingJob ? String(delivery.processingJob.id) : '-',
+        delivery.processingJob?.status || '-',
+        latest?.decision || '-',
+        latest?.reasonCode || '-',
+      ];
+    },
+  );
 }
 
 function renderEventHistory(history) {
-  emptyEventHistory.hidden = history.length > 0;
-
-  for (const entry of history) {
-    const row = document.createElement('tr');
-    appendCells(row, [
-      entry.orderId,
-      entry.type,
-      entry.fromStatus || '-',
-      entry.toStatus,
-      JSON.stringify(entry.changedFields),
-    ]);
-    eventHistoryTable.append(row);
-  }
+  renderTableRows(eventHistoryTable, emptyEventHistory, history, (entry) => [
+    entry.orderId,
+    entry.type,
+    entry.fromStatus || '-',
+    entry.toStatus,
+    JSON.stringify(entry.changedFields),
+  ]);
 }
 
 function renderEventDecisions(decisions) {
-  emptyEventDecisions.hidden = decisions.length > 0;
-
-  for (const decision of decisions) {
-    const row = document.createElement('tr');
-    appendCells(row, [
+  renderTableRows(
+    eventDecisionsTable,
+    emptyEventDecisions,
+    decisions,
+    (decision) => [
       String(decision.id),
       decision.decision,
       decision.reasonCode,
       decision.reasonMessage,
-    ]);
-    eventDecisionsTable.append(row);
+    ],
+  );
+}
+
+async function inspectFirstQueuedOrder() {
+  const first = lastQueuedResults.find((result) => result.orderId);
+
+  if (!first) {
+    renderOrderInspector(null);
+    return;
+  }
+
+  orderLookupInput.value = first.orderId;
+  await inspectOrder(first.orderId);
+}
+
+async function inspectOrder(orderId = orderLookupInput.value.trim()) {
+  if (!orderId) {
+    renderOrderInspector(null);
+    setMessage('Provide an orderId to inspect.', 'error');
+    return;
+  }
+
+  try {
+    const details = await requestJson(
+      `/api/orders/${encodeURIComponent(orderId)}`,
+    );
+    renderOrderInspector(details);
+  } catch (error) {
+    renderOrderInspector({ error: error.message, orderId });
+    setMessage(error.message, 'error');
+  }
+}
+
+function renderOrderInspector(details) {
+  clearTableBodies(
+    orderHistoryTable,
+    orderRejectedTable,
+    orderPendingTable,
+    orderAuditTable,
+  );
+  orderInspectorOutput.textContent = JSON.stringify(details || {}, null, 2);
+
+  if (!details || details.error) {
+    orderSummary.innerHTML = '<span>No order loaded.</span>';
+    showEmptyStates(
+      emptyOrderHistory,
+      emptyOrderRejected,
+      emptyOrderPending,
+      emptyOrderAudit,
+    );
+    return;
+  }
+
+  const state = details.currentState;
+  orderSummary.innerHTML = '';
+  orderSummary.append(
+    summaryItem('Order', details.orderId),
+    summaryItem('Status', state ? state.status : 'No current state'),
+    summaryItem('Amount minor', state ? displayValue(state.amountMinor) : '-'),
+    summaryItem('Currency', state ? displayValue(state.currency) : '-'),
+    summaryItem(
+      'Paid minor',
+      state ? displayValue(state.paidAmountMinor) : '-',
+    ),
+    summaryItem(
+      'Refunded minor',
+      state ? displayValue(state.refundedAmountMinor) : '-',
+    ),
+    summaryItem('Version', state ? String(state.version) : '-'),
+    summaryItem('Audit rows', String(details.auditLog.length)),
+  );
+
+  renderOrderHistory(details.history);
+  renderOrderRejectedEvents(details.rejectedEvents);
+  renderOrderPendingJobs(details.pendingJobs);
+  renderOrderAuditLog(details.auditLog);
+}
+
+function renderOrderHistory(history) {
+  renderTableRows(orderHistoryTable, emptyOrderHistory, history, (entry) => [
+    entry.eventId,
+    entry.type,
+    entry.fromStatus || '-',
+    entry.toStatus,
+    JSON.stringify(entry.changedFields),
+    JSON.stringify(entry.skippedFields),
+  ]);
+}
+
+function renderOrderRejectedEvents(rejectedEvents) {
+  renderTableRows(
+    orderRejectedTable,
+    emptyOrderRejected,
+    rejectedEvents,
+    (event) => [
+      event.eventId || '-',
+      event.type || '-',
+      event.decision,
+      event.reasonCode,
+      event.reasonMessage,
+    ],
+  );
+}
+
+function renderOrderPendingJobs(pendingJobs) {
+  renderTableRows(orderPendingTable, emptyOrderPending, pendingJobs, (job) => [
+    String(job.id),
+    job.eventId || '-',
+    job.type || '-',
+    job.status,
+    String(job.attempts),
+    job.lastReasonCode || '-',
+  ]);
+}
+
+function renderOrderAuditLog(auditLog) {
+  renderTableRows(orderAuditTable, emptyOrderAudit, auditLog, (decision) => [
+    String(decision.id),
+    decision.eventId || '-',
+    decision.decision,
+    decision.reasonCode,
+    decision.reasonMessage,
+  ]);
+}
+
+function displayValue(value) {
+  return value === null || value === undefined ? '-' : String(value);
+}
+
+function clearTableBodies(...tables) {
+  for (const table of tables) {
+    table.innerHTML = '';
+  }
+}
+
+function showEmptyStates(...emptyStates) {
+  for (const emptyState of emptyStates) {
+    emptyState.hidden = false;
+  }
+}
+
+function renderTableRows(table, emptyState, entries, valuesForEntry) {
+  emptyState.hidden = entries.length > 0;
+
+  for (const entry of entries) {
+    const row = document.createElement('tr');
+    appendCells(row, valuesForEntry(entry));
+    table.append(row);
   }
 }
 
@@ -651,9 +829,15 @@ inspectFirstButton.addEventListener(
   'click',
   () => void inspectFirstQueuedEvent(),
 );
+inspectOrderButton.addEventListener('click', () => void inspectOrder());
+inspectFirstOrderButton.addEventListener(
+  'click',
+  () => void inspectFirstQueuedOrder(),
+);
 formatButton.addEventListener('click', formatPayload);
 refreshButton.addEventListener('click', () => void loadStats());
 
 setScenario('stress');
 renderEventInspector(null);
+renderOrderInspector(null);
 void loadStats();

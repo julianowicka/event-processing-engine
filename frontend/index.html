@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Event Engine Test Console</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=order-inspector-3" />
   </head>
   <body>
     <main class="shell">
@@ -284,9 +284,135 @@
             <pre id="eventInspectorOutput">{}</pre>
           </div>
         </section>
+
+        <section class="inspector-panel">
+          <div class="panel-heading split">
+            <h2>Order Inspector</h2>
+            <div class="lookup-actions">
+              <input
+                id="orderLookupInput"
+                type="text"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="orderId"
+                aria-label="Order ID"
+              />
+              <button
+                class="ghost-button compact"
+                id="inspectFirstOrderButton"
+                type="button"
+              >
+                First queued order
+              </button>
+              <button
+                class="primary-button compact"
+                id="inspectOrderButton"
+                type="button"
+              >
+                Inspect
+              </button>
+            </div>
+          </div>
+          <div class="inspector-grid">
+            <div class="event-summary order-summary" id="orderSummary">
+              <span>Choose or send an order.</span>
+            </div>
+            <div class="event-section order-section">
+              <div class="section-heading">
+                <h3>History</h3>
+              </div>
+              <div class="table-wrap compact-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Event</th>
+                      <th>Type</th>
+                      <th>From</th>
+                      <th>To</th>
+                      <th>Changed</th>
+                      <th>Skipped</th>
+                    </tr>
+                  </thead>
+                  <tbody id="orderHistoryTable"></tbody>
+                </table>
+              </div>
+              <p class="empty-state" id="emptyOrderHistory">
+                No history rows for this order.
+              </p>
+            </div>
+            <div class="event-section order-section">
+              <div class="section-heading">
+                <h3>Rejected Events</h3>
+              </div>
+              <div class="table-wrap compact-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Event</th>
+                      <th>Type</th>
+                      <th>Decision</th>
+                      <th>Reason</th>
+                      <th>Message</th>
+                    </tr>
+                  </thead>
+                  <tbody id="orderRejectedTable"></tbody>
+                </table>
+              </div>
+              <p class="empty-state" id="emptyOrderRejected">
+                No rejected events for this order.
+              </p>
+            </div>
+            <div class="event-section order-section order-stack-left">
+              <div class="section-heading">
+                <h3>Pending Jobs</h3>
+              </div>
+              <div class="table-wrap compact-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Job</th>
+                      <th>Event</th>
+                      <th>Type</th>
+                      <th>Status</th>
+                      <th>Attempts</th>
+                      <th>Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody id="orderPendingTable"></tbody>
+                </table>
+              </div>
+              <p class="empty-state" id="emptyOrderPending">
+                No pending jobs for this order.
+              </p>
+            </div>
+            <div class="event-section order-section order-stack-left">
+              <div class="section-heading">
+                <h3>Audit Log</h3>
+              </div>
+              <div class="table-wrap compact-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Event</th>
+                      <th>Decision</th>
+                      <th>Reason</th>
+                      <th>Message</th>
+                    </tr>
+                  </thead>
+                  <tbody id="orderAuditTable"></tbody>
+                </table>
+              </div>
+              <p class="empty-state" id="emptyOrderAudit">
+                No audit decisions for this order.
+              </p>
+            </div>
+            <pre id="orderInspectorOutput">{}</pre>
+          </div>
+        </section>
       </section>
     </main>
 
-    <script src="./app.js?v=event-inspector-1"></script>
+    <script src="./app.js?v=order-inspector-1"></script>
   </body>
 </html>
