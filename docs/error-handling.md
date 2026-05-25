@@ -14,7 +14,7 @@ The API returns a standard NestJS error response with an appropriate HTTP status
 ## Event-Level Decisions
 
 These errors do not reject the ingestion request. They are recorded against the
-individual processing job and raw delivery:
+individual raw delivery:
 
 - Missing `eventId`.
 - Missing `orderId`.
@@ -24,41 +24,39 @@ individual processing job and raw delivery:
 - Invalid money or currency field.
 - Forbidden state transition.
 - Obsolete field update.
+- Lifecycle status supplied through `ORDER_UPDATED`.
 - Duplicate `eventId`.
 - Refund greater than captured payment.
 
-## Deferred Is Not Rejected
+## Missing Order
 
 If an otherwise valid event references an order that does not exist yet, the
-decision is `DEFERRED`, not `REJECTED`, and the job remains retryable. This
-supports out-of-order delivery.
+decision is final `REJECTED` with reason `ORDER_NOT_READY`. The chosen
+out-of-order strategy is field-level merging for existing orders, not business
+replay before creation.
 
 ## Failure Safety
 
 Ingestion and worker processing are separate SQLite transactions. The database
 service commits only after a mutation completes successfully.
 
-- If ingestion fails, no raw deliveries or processing jobs from that request are
-  saved.
+- If ingestion fails, no raw deliveries from that request are saved.
 - If processing fails unexpectedly, the worker records the technical failure,
-  schedules a retry, or moves the job to the DLQ after the retry limit.
-- Worker failures update `event_processing_jobs`; they do not update
-  `raw_incoming_events`.
+  schedules a retry, or moves the delivery to the DLQ after the retry limit.
+- Worker failures update only processing lifecycle fields on
+  `raw_incoming_events`; its `raw_event_json` snapshot is immutable.
 
-Business decisions are final and are not retried. `DEFERRED` jobs are not
-failures; they are retried after later ingestions.
+Business decisions are final and are not retried.
 
 ## Retry And Dead Letter Policy
 
-Implemented worker behavior:
+Target worker behavior:
 
-- `DEFERRED` jobs are retried during later `POST /events` calls.
-- A same-batch retry can also happen when a later event creates or changes the
-  order needed by an earlier deferred event.
 - Retry technical failures up to `3` attempts.
-- Keep failed-but-retryable jobs `PENDING` until their next `available_at`.
-- After attempt `3`, move the processing job to a dead-letter queue with the raw
-  event snapshot, error message, reason code, and attempt count.
+- Keep failed-but-retryable deliveries `RETRY` until their next `available_at`.
+- After attempt `3`, move the delivery to a dead-letter queue with an error
+  message; its raw event snapshot and attempt count remain available from
+  `raw_incoming_events`.
 - Manual replay should require deliberate inspection.
 
 ## Reason Codes
@@ -73,6 +71,7 @@ Stable reason codes:
 - `ORDER_NOT_READY`
 - `ORDER_ALREADY_EXISTS`
 - `FORBIDDEN_TRANSITION`
+- `STATUS_REQUIRES_DOMAIN_EVENT`
 - `OBSOLETE_EVENT`
 - `OBSOLETE_FIELD`
 - `NO_APPLICABLE_CHANGES`

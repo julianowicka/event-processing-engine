@@ -1,6 +1,6 @@
 # Technology Stack
 
-The implementation favors a small, working MVP over infrastructure-heavy
+The target design favors a small, working MVP over infrastructure-heavy
 architecture.
 
 ## Runtime
@@ -27,13 +27,13 @@ architecture.
 ## Processing
 
 - Explicit phase 1 ingestion service.
-- Inbox-style queue with immutable `raw_incoming_events` and mutable
-  `event_processing_jobs`.
+- Inbox-style queue with immutable raw JSON and mutable lifecycle fields on
+  `raw_incoming_events`.
 - In-process `EventWorkerService` for background processing.
 - Worker interval defaults to `100` ms and can be changed with
   `EVENT_ENGINE_WORKER_INTERVAL_MS`.
-- Deferred jobs for valid events that arrive before `ORDER_CREATED`.
-- Technical failures retry up to `3` attempts, then move the job to
+- Events requiring a missing order are rejected with `ORDER_NOT_READY`.
+- Technical failures retry up to `3` attempts, then move the delivery to
   `dead_letter_events`.
 
 ## Validation
@@ -45,8 +45,9 @@ architecture.
 ## Testing
 
 - Jest unit tests for processing behavior.
-- The current tests cover worker-style processing, deferral retry,
-  deduplication, partial merge, forbidden transitions, and DLQ handling.
+- Target tests cover worker-style processing, missing-order rejection,
+  deduplication, partial merge, domain-owned status transitions, and DLQ
+  handling.
 
 ## Optional Future Work
 

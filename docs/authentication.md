@@ -6,7 +6,7 @@ The task requires the business API and a short README. Adding mandatory
 authentication would make evaluator calls harder because every sample request
 would need an API key.
 
-## Current Behavior
+## Target Behavior
 
 - `POST /events` is public.
 - `GET /orders/:id` is public.

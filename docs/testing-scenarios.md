@@ -2,16 +2,18 @@
 
 Tests focus on the business rules that matter for the recruitment task.
 
-## Implemented Unit Coverage
+## Target Unit Coverage
 
-- Worker-style processing of queued deliveries.
-- Raw deliveries are insert-only while job status changes in
-  `event_processing_jobs`.
-- Event arrives before `ORDER_CREATED` and is retried after creation.
+- Worker-style processing of stored deliveries.
+- Raw JSON remains immutable while lifecycle state on `raw_incoming_events`
+  moves from pending to final state.
+- Event requiring an order before `ORDER_CREATED` is rejected.
 - Duplicate `eventId` handling.
 - Field-level partial merge for late updates.
 - Forbidden transition such as `CANCELLED -> PAID`.
-- Technical worker failure moves the job to DLQ after retry limit.
+- `ORDER_UPDATED` can partially apply amount or currency while rejecting a
+  supplied lifecycle status.
+- Technical worker failure moves the delivery to DLQ after retry limit.
 
 ## Additional Useful Scenarios
 
@@ -20,9 +22,9 @@ Tests focus on the business rules that matter for the recruitment task.
 - Same timestamp conflict keeps the first accepted field value.
 - Partial refund then full refund.
 - Refund exceeding captured payment is rejected.
-- Direct `ORDER_UPDATED` status transition follows the state machine.
-- `GET /orders/:id` returns current state, history, rejected events, pending
-  events, and audit log.
+- `PAYMENT_CAPTURED` creates a consistent `PAID` state and captured amount.
+- `GET /orders/:id` returns current state, history, rejected events, and audit
+  log after eventual processing completes.
 - `GET /stats` returns required counters.
 
 ## Quality Gate

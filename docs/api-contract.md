@@ -1,29 +1,28 @@
-# API Contract
+# API Contract - Simplified Target Design
 
-The API is asynchronous from the caller's perspective. `POST /events` stores raw
+This document describes the target contract for the recruitment-task version.
 
-deliveries, creates processing jobs, and returns a queued response. A background
-worker then processes available jobs in raw delivery order.
+The API is asynchronous from the caller's perspective: `POST /events` stores
+raw deliveries and returns immediately, and a background worker later records
+decisions and updates order state.
 
-## Business Endpoints
+## Required Endpoints
 
 - `POST /events`
 - `GET /orders/:id`
 - `GET /stats`
 
-`GET /health` is operational and not part of the recruitment business contract.
-`GET /events/:eventId` is a diagnostic read endpoint used by the test console to
-inspect one event across raw deliveries, processing decisions, and accepted
-history rows.
+Operational endpoints such as `GET /health` may remain, but diagnostic event
+inspection and processing-lifecycle output are outside the recruitment-task
+scope.
 
 ## `POST /events`
 
-Accepts a JSON array of event objects. The endpoint stores every item as an
-insert-only raw delivery, including malformed items, creates one
-`event_processing_jobs` row per delivery, then asks the background worker to
-process available work.
+Accepts a JSON array. Every array item is persisted in `raw_incoming_events`,
+including malformed items and duplicate deliveries. Validation and business
+decisions happen later in the worker.
 
-Request example:
+Request:
 
 ```json
 [
@@ -36,126 +35,123 @@ Request example:
       "amount": 199.99,
       "currency": "PLN"
     }
-  },
-  {
-    "eventId": "evt-1002",
-    "orderId": "ord-501",
-    "type": "PAYMENT_CAPTURED",
-    "timestamp": 1710001000,
-    "payload": {
-      "amount": 199.99
-    }
   }
 ]
 ```
 
-Response example:
+Response:
 
 ```json
 {
-  "mode": "ASYNC_WORKER",
-  "results": [
-    {
-      "incomingEventId": 1,
-      "processingJobId": 1,
-      "eventId": "evt-1001",
-      "orderId": "ord-501",
-      "type": "ORDER_CREATED",
-      "status": "QUEUED",
-      "reasonCode": null,
-      "reasonMessage": "Event queued for background processing",
-      "processingTimeMs": 0
-    },
-    {
-      "incomingEventId": 2,
-      "processingJobId": 2,
-      "eventId": "evt-1002",
-      "orderId": "ord-501",
-      "type": "PAYMENT_CAPTURED",
-      "status": "QUEUED",
-      "reasonCode": null,
-      "reasonMessage": "Event queued for background processing",
-      "processingTimeMs": 0
-    }
-  ],
-  "summary": {
-    "queued": 2
-  }
+  "received": 1,
+  "incomingEventIds": [1]
 }
 ```
 
-Final processing decisions are visible through `GET /orders/:id`, `GET /stats`,
-and the SQLite database after the worker runs.
+The API does not expose internal processing lifecycle fields because they
+belong to each stored delivery in the simplified schema.
+
+The API is eventually consistent. A successful `POST /events` confirms durable
+acceptance for later processing; `GET /orders/:id` and `GET /stats` reflect only
+deliveries already finalized by the background worker.
 
 ## Worker Decisions
 
-- `ACCEPTED`: the event changed order state.
-- `PARTIALLY_APPLIED`: at least one field was applied and at least one obsolete
-  field was skipped.
-- `REJECTED`: the event is final and did not change state.
-- `DUPLICATE`: the `eventId` was already seen by a different raw delivery.
-- `DEFERRED`: the processing job needs an order that does not exist yet and will
-  be retried later.
-- `FAILED`: a technical processing failure exhausted retries and moved the job
-  to DLQ.
+Every delivery eventually receives one final audit decision:
+
+- `ACCEPTED`: the event changed the order state.
+- `PARTIALLY_APPLIED`: some fields were applied and stale or forbidden fields
+  were skipped.
+- `REJECTED`: the event was valid enough to evaluate but cannot be applied, or
+  its schema/type is invalid.
+- `DUPLICATE`: a valid `eventId` was already claimed.
+- `FAILED`: unexpected processing errors exhausted the technical retry limit.
+
+Retries before the final result are lifecycle metadata, not audit decisions.
 
 ## `GET /orders/:id`
 
-Returns current state, accepted history, rejected/duplicate/failed decisions,
-pending jobs with their latest decisions, and the complete audit log for the
-order.
+After an order creation and a payment delivery have been finalized, the
+endpoint returns the information requested by the assignment:
 
-Unknown orders return `404` unless there is audit information for that order.
+```json
+{
+  "orderId": "ord-501",
+  "currentState": {
+    "status": "PAID",
+    "amountMinor": 19999,
+    "currency": "PLN",
+    "paidAmountMinor": 19999,
+    "refundedAmountMinor": 0
+  },
+  "history": [
+    {
+      "eventId": "evt-1001",
+      "decision": "ACCEPTED",
+      "changedFields": {
+        "status": "CREATED",
+        "amountMinor": 19999,
+        "currency": "PLN"
+      }
+    },
+    {
+      "eventId": "evt-1002",
+      "decision": "ACCEPTED",
+      "changedFields": {
+        "status": "PAID",
+        "paidAmountMinor": 19999
+      }
+    }
+  ],
+  "rejectedEvents": [],
+  "auditLog": []
+}
+```
 
-## `GET /events/:eventId`
+History is produced from `event_decisions` rows with decision `ACCEPTED` or
+`PARTIALLY_APPLIED`; there is no separate history table.
 
-Returns all raw deliveries for the external `eventId`, all audit decisions for
-that event, and any `order_history` entries produced by that event. This is
-intended for debugging duplicates, deferred retries, partial merges, and
-forbidden transitions from the frontend test console.
+Rejected events include `REJECTED`, `DUPLICATE`, and `FAILED` decisions with
+their reason codes and messages. The full audit log may be returned as a useful
+addition to the minimum assignment response.
 
-Unknown event ids return `404`.
+Pending delivery state, retry information, and DLQ details are intentionally not
+part of this business endpoint.
 
 ## `GET /stats`
 
-Returns the required counters plus diagnostic counters.
+Returns the required precomputed statistics:
 
 ```json
 {
   "validEventsCount": 120,
   "rejectedEventsCount": 8,
   "duplicateEventsCount": 3,
-  "averageProcessingTimeMs": 4.7,
-  "acceptedEventsCount": 115,
-  "partiallyAppliedEventsCount": 5,
-  "processedEventsCount": 131,
-  "pendingEventsCount": 0,
-  "deadLetterEventsCount": 0
+  "averageProcessingTimeMs": 4.7
 }
 ```
 
-Deferred jobs are not counted as rejected. Dead-lettered technical failures are
-counted as rejected. `pendingEventsCount` is derived from
-`event_processing_jobs`, not from `raw_incoming_events`.
+- Valid events are `ACCEPTED` plus `PARTIALLY_APPLIED`.
+- Rejected events are `REJECTED` plus exhausted technical failures reported as
+  `FAILED`.
+- Duplicate events are counted separately.
+- Average processing time is computed from the stored total and final processed
+  count.
 
-## `GET /health`
+## Event And Ordering Rules
 
-```json
-{
-  "status": "ok",
-  "database": "ok",
-  "timestamp": "2026-05-22T18:00:00.000Z"
-}
-```
-
-## Event Payload Rules
-
-- Money fields are accepted as decimals and stored as integer minor units.
-- `ORDER_CREATED` creates an order in `CREATED` status and may include `amount`
-  and `currency`.
-- `ORDER_UPDATED` may update `amount`, `currency`, and optionally request a
-  status transition through `payload.status`.
-- `PAYMENT_CAPTURED` captures one payment and moves `CREATED -> PAID`.
-- `ORDER_CANCELLED` moves `CREATED -> CANCELLED`.
-- `REFUND_ISSUED` uses `amount` or `refundAmount` as a refund delta and moves a
-  paid order to `PARTIALLY_REFUNDED` or `REFUNDED`.
+- Money fields are stored as integer minor units.
+- `ORDER_CREATED` creates an order in `CREATED` status.
+- `ORDER_UPDATED` modifies only supplied non-lifecycle fields, currently
+  `amount` and `currency`.
+- Field-level timestamp metadata allows newer fields from an otherwise stale
+  event to be applied while obsolete fields are skipped.
+- `PAYMENT_CAPTURED` and `REFUND_ISSUED` are validated business operations.
+- Forbidden transitions such as `CANCELLED -> PAID` are rejected.
+- Lifecycle status is derived from `ORDER_CREATED`, `PAYMENT_CAPTURED`,
+  `ORDER_CANCELLED`, and `REFUND_ISSUED`. A `status` supplied in an
+  `ORDER_UPDATED` payload is not applied; any applicable descriptive fields
+  from the same event may still be partially applied and the skipped status is
+  recorded in the audit decision.
+- An event that requires a missing order is rejected; automatic business
+  deferral is not part of the simplified target.

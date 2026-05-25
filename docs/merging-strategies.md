@@ -9,7 +9,6 @@ These fields represent the latest known value:
 
 - `amountMinor`
 - `currency`
-- `status` when status is requested directly by `ORDER_UPDATED`
 
 A set-like field is applied only when the event timestamp is strictly greater
 than the timestamp stored for that field.
@@ -45,15 +44,19 @@ applied twice.
 
 ## Status Changes
 
-Status changes must satisfy the state machine. A direct `payload.status` update
-is also subject to the set-like timestamp rule for `status`.
+Status changes must satisfy the state machine and are owned by lifecycle event
+types:
 
-Derived status changes from payment/refund events are handled by the business
-rule for that event type:
-
+- creation moves `NEW -> CREATED`,
 - payment moves `CREATED -> PAID`,
+- cancellation moves `CREATED -> CANCELLED`,
 - refunds move `PAID -> PARTIALLY_REFUNDED | REFUNDED`,
 - refunds can continue from `PARTIALLY_REFUNDED`.
+
+`ORDER_UPDATED.payload.status` is not applied. This avoids a `PAID` order with
+no captured payment or a `REFUNDED` order with no refund amount. If the same
+update contains a newer amount or currency, those fields are applied and the
+status field is recorded as skipped.
 
 ## Money Fields
 

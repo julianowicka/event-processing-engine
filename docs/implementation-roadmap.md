@@ -3,25 +3,26 @@
 The roadmap is scoped to a 6-10 hour recruitment implementation with a working
 fragment preferred over an overbuilt design.
 
-## Implemented MVP
+## Target MVP
 
 - SQLite file persistence on disk.
-- Append-only raw deliveries.
-- Separate `event_processing_jobs` queue/status table.
+- Immutable raw event snapshots with processing lifecycle metadata on
+  `raw_incoming_events`.
 - Materialized order state.
-- History, audit decisions, deduplication keys, field versions, stats, and DLQ.
+- History from applied audit decisions, deduplication keys, field versions,
+  stats, and DLQ.
 - Event-shape validation during worker processing.
 - Deduplication by `eventId`.
 - Explicit order status state machine.
 - Field-level merge for set-like fields.
 - Cumulative payment/refund behavior.
-- Deferred events for out-of-order delivery before creation.
-- `POST /events`: ingest and return `QUEUED`.
-- Background worker: process available `PENDING` and `DEFERRED` jobs.
+- Lifecycle status transitions owned by domain events, not `ORDER_UPDATED`.
+- Missing-order events rejected; stale fields for existing orders merged.
+- `POST /events`: ingest and return stored delivery ids.
+- Background worker: process available `PENDING` and `RETRY` deliveries.
 - Retry metadata and `dead_letter_events` for technical worker failures.
-- `GET /orders/:id`: current state, history, rejected events, pending jobs,
-  and audit log.
-- `GET /stats`: required counters, timing, pending count, and DLQ count.
+- `GET /orders/:id`: current state, history, rejected events, and audit log.
+- `GET /stats`: required counters and processing time.
 - `GET /health`: operational health endpoint.
 - README with assumptions, run commands, and API examples.
 - Focused Jest and e2e tests for critical business behavior.

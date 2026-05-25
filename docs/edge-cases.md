@@ -8,8 +8,8 @@ Same `eventId` appears again.
 
 Decision: `DUPLICATE`.
 
-Action: store the raw delivery, create a processing job, skip state changes,
-write a `DUPLICATE` audit decision, and mark the job as `DONE`.
+Action: store the raw delivery, skip state changes, write a `DUPLICATE` audit
+decision, and mark the delivery as `DONE`.
 
 ## Unknown Event Type
 
@@ -17,23 +17,24 @@ Event type is not supported.
 
 Decision: `REJECTED`.
 
-Action: store the raw delivery, create a processing job, and write
-`UNKNOWN_EVENT_TYPE`.
+Action: store the raw delivery and write `UNKNOWN_EVENT_TYPE`.
 
 ## Event Before Create
 
 An update, payment, cancellation, or refund arrives for an unknown order.
 
-Decision: `DEFERRED`.
+Decision: `REJECTED`.
 
-Action: keep the processing job deferred with reason `ORDER_NOT_READY`. It is
-retried after future ingestions. This avoids permanently losing valid
-out-of-order events.
+Action: write `ORDER_NOT_READY` and do not change state. This is an explicit
+scope choice: stale partial events for existing orders can be merged, but
+events requiring an order that has not been created are not retained for
+business replay.
 
-## Create After Deferred Event
+## Create After Earlier Rejected Event
 
-If an `ORDER_CREATED` event later creates the order, phase 2 retries deferred
-jobs. In a single batch this can happen inside the same `POST /events` call.
+If an `ORDER_CREATED` event later creates the order, it does not reconsider a
+previously rejected delivery. The sender must submit a new event with a new
+`eventId` when the intended business action is still required.
 
 ## Cancelled Order Receives Payment
 
@@ -47,11 +48,10 @@ Action: preserve `CANCELLED` state and audit `FORBIDDEN_TRANSITION`.
 
 `REFUND_ISSUED` arrives before captured payment.
 
-Decision: `DEFERRED` if the order does not exist yet, or if a matching
-`PAYMENT_CAPTURED` job for the order is still pending. Otherwise `REJECTED`
-when the order exists but no payment can still make the refund valid.
+Decision: `REJECTED`.
 
-Action: do not change order state.
+Action: do not change order state and audit the missing captured payment or
+missing order reason.
 
 ## Partial Refund
 
@@ -91,3 +91,14 @@ Two accepted events set different order amounts.
 
 Decision: strictly newer timestamp wins for `amountMinor`. Same timestamp keeps
 the first accepted value.
+
+## Updated Status Without Domain Event
+
+`ORDER_UPDATED` contains `status: "PAID"` together with `amount: 199.99`.
+
+Decision: `PARTIALLY_APPLIED` if the amount is applicable; otherwise
+`REJECTED`.
+
+Action: apply a current `amountMinor` change but skip `status` with reason
+`STATUS_REQUIRES_DOMAIN_EVENT`. A later `PAYMENT_CAPTURED` event is required to
+move the order to `PAID` and record `paidAmountMinor`.
