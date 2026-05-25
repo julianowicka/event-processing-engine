@@ -400,23 +400,24 @@ async function sendBatch() {
       method: 'POST',
       body: JSON.stringify(parsed),
     });
+    const queuedBatch = normalizeQueuedBatch(response, parsed);
 
-    lastQueuedResults = response.results || [];
-    renderResults(response.results || []);
+    lastQueuedResults = queuedBatch.results;
+    renderResults(queuedBatch.results);
     renderResponse(response);
 
     const settledStats = await waitForProcessedCount(
-      beforeStats.processedEventsCount + response.summary.queued,
+      beforeStats.processedEventsCount + queuedBatch.queuedCount,
     );
     const processedDelta =
       settledStats.processedEventsCount - beforeStats.processedEventsCount;
 
     setMessage(
-      `Queued ${response.summary.queued} deliveries. Worker processed ${processedDelta}.`,
+      `Queued ${queuedBatch.queuedCount} deliveries. Worker processed ${processedDelta}.`,
       'success',
     );
     lastRunStatus.textContent =
-      processedDelta >= response.summary.queued ? 'Processed' : 'Queued';
+      processedDelta >= queuedBatch.queuedCount ? 'Processed' : 'Queued';
 
     await Promise.all([inspectFirstQueuedEvent(), inspectFirstQueuedOrder()]);
   } catch (error) {
@@ -428,6 +429,52 @@ async function sendBatch() {
   } finally {
     setBusy(false);
   }
+}
+
+function normalizeQueuedBatch(response, submittedPayload) {
+  if (response && Array.isArray(response.results)) {
+    return {
+      queuedCount: response.summary?.queued ?? response.results.length,
+      results: response.results,
+    };
+  }
+
+  const events = Array.isArray(response)
+    ? response
+    : Array.isArray(submittedPayload)
+      ? submittedPayload
+      : [];
+
+  return {
+    queuedCount: events.length,
+    results: events.map((event) => {
+      const projection = projectQueuedEvent(event);
+
+      return {
+        incomingEventId: null,
+        processingJobId: null,
+        eventId: projection.eventId,
+        orderId: projection.orderId,
+        type: projection.type,
+      };
+    }),
+  };
+}
+
+function projectQueuedEvent(event) {
+  if (!event || typeof event !== 'object' || Array.isArray(event)) {
+    return {
+      eventId: null,
+      orderId: null,
+      type: null,
+    };
+  }
+
+  return {
+    eventId: typeof event.eventId === 'string' ? event.eventId : null,
+    orderId: typeof event.orderId === 'string' ? event.orderId : null,
+    type: typeof event.type === 'string' ? event.type : null,
+  };
 }
 
 async function loadStats() {
@@ -487,8 +534,8 @@ function renderResults(results) {
     `;
 
     const cells = row.querySelectorAll('td');
-    cells[0].textContent = String(result.incomingEventId);
-    cells[1].textContent = String(result.processingJobId);
+    cells[0].textContent = displayValue(result.incomingEventId);
+    cells[1].textContent = displayValue(result.processingJobId);
     renderInspectorLink(
       cells[2],
       result.eventId,
