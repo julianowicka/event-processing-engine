@@ -11,9 +11,12 @@ describe('EventEnqueuerService', () => {
         Promise.resolve(rows.map((row, index) => ({ id: index + 1, ...row }))),
     );
     const service = new EventEnqueuerService(
-      {
-        createMany,
-      } as unknown as RawIncomingEventRepository,
+      Object.assign(
+        Object.create(
+          RawIncomingEventRepository.prototype,
+        ) as RawIncomingEventRepository,
+        { createMany },
+      ),
       new RawEventsFactory(),
     );
 

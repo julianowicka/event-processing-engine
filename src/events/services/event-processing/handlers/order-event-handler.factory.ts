@@ -1,6 +1,6 @@
 import { Injectable, Type } from '@nestjs/common';
 import { DiscoveryService, ModuleRef } from '@nestjs/core';
-import { OrderStatus } from 'src/events/types/event.types';
+import { OrderStatus } from '../../../types/event.types';
 import { OrderEventHandler } from './order-event-handler';
 import { ORDER_STATUS_HANDLER_METADATA } from './order-status-handler.decorator';
 
@@ -11,8 +11,10 @@ export class OrderEventHandlerFactory {
     private readonly moduleRef: ModuleRef,
   ) {}
 
-  createOrderEventHandler(orderStatus: OrderStatus): OrderEventHandler {
-    const handlers = this.getOrderEventHandlerTypes();
+  async createOrderEventHandler(
+    orderStatus: OrderStatus,
+  ): Promise<OrderEventHandler> {
+    const handlers = await this.getOrderEventHandlerTypes();
     const handler = handlers.get(orderStatus);
 
     if (!handler) {
@@ -24,10 +26,11 @@ export class OrderEventHandlerFactory {
     return this.moduleRef.get(handler, { strict: false });
   }
 
-  private getOrderEventHandlerTypes(): Map<
-    OrderStatus,
-    Type<OrderEventHandler>
+  private async getOrderEventHandlerTypes(): Promise<
+    Map<OrderStatus, Type<OrderEventHandler>>
   > {
+    await Promise.resolve();
+
     const handlers = new Map<OrderStatus, Type<OrderEventHandler>>();
 
     for (const provider of this.discoveryService.getProviders()) {

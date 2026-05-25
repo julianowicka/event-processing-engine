@@ -1,34 +1,44 @@
 import { Injectable } from '@nestjs/common';
-import { OrderEntity, RawIncomingEventEntity } from 'src/database/entities';
-import { OrderStatus } from 'src/events/types/event.types';
-import { OrderEventHandler } from './order-event-handler';
+import { OrderStatus } from '../../../types/event.types';
+import { OrderStateApplicationService } from '../order-state-application.service';
+import {
+  OrderEventHandler,
+  type OrderEventHandlingContext,
+} from './order-event-handler';
 import { HandlesOrderStatus } from './order-status-handler.decorator';
 
 @HandlesOrderStatus(OrderStatus.Created)
 @Injectable()
 export class OrderCreatedEventHandler implements OrderEventHandler {
-  handleOrderCreatedEvent(
-    _order: OrderEntity | null,
-    _event: RawIncomingEventEntity,
-  ): void {}
+  constructor(private readonly orders: OrderStateApplicationService) {}
 
-  handleOrderUpdatedEvent(
-    _order: OrderEntity | null,
-    _event: RawIncomingEventEntity,
-  ): void {}
+  async handleOrderCreatedEvent(
+    context: OrderEventHandlingContext,
+  ): Promise<void> {
+    await this.orders.rejectOrderAlreadyExists(context);
+  }
 
-  handlePaymentCapturedEvent(
-    _order: OrderEntity | null,
-    _event: RawIncomingEventEntity,
-  ): void {}
+  async handleOrderUpdatedEvent(
+    context: OrderEventHandlingContext,
+  ): Promise<void> {
+    await this.orders.updateOrderFields(context);
+  }
 
-  handleOrderCancelledEvent(
-    _order: OrderEntity | null,
-    _event: RawIncomingEventEntity,
-  ): void {}
+  async handlePaymentCapturedEvent(
+    context: OrderEventHandlingContext,
+  ): Promise<void> {
+    await this.orders.capturePayment(context);
+  }
 
-  handleRefundIssuedEvent(
-    _order: OrderEntity | null,
-    _event: RawIncomingEventEntity,
-  ): void {}
+  async handleOrderCancelledEvent(
+    context: OrderEventHandlingContext,
+  ): Promise<void> {
+    await this.orders.cancelOrder(context);
+  }
+
+  async handleRefundIssuedEvent(
+    context: OrderEventHandlingContext,
+  ): Promise<void> {
+    await this.orders.rejectForbiddenTransition(context);
+  }
 }

@@ -1,15 +1,20 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnModuleInit, Optional } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 import { RawIncomingEventEntity } from '../../database/entities';
 import { RawIncomingEventRepository } from '../repositories';
 import { ProcessingStatus } from '../types/event.types';
+import { EventProcessingService } from './event-processing/event-processing.service';
 
 const DEFAULT_EVENT_PROCESSING_SCHEDULER_INTERVAL_MS = 100;
 
+const configuredSchedulerIntervalMs = Number(
+  process.env.EVENT_PROCESSING_SCHEDULER_INTERVAL_MS,
+);
 const eventProcessingSchedulerIntervalMs =
-  getEventProcessingSchedulerIntervalMs(
-    process.env.EVENT_PROCESSING_SCHEDULER_INTERVAL_MS,
-  );
+  Number.isInteger(configuredSchedulerIntervalMs) &&
+  configuredSchedulerIntervalMs > 0
+    ? configuredSchedulerIntervalMs
+    : DEFAULT_EVENT_PROCESSING_SCHEDULER_INTERVAL_MS;
 
 @Injectable()
 export class EventProcessingSchedulerService implements OnModuleInit {
@@ -17,15 +22,17 @@ export class EventProcessingSchedulerService implements OnModuleInit {
 
   constructor(
     private readonly rawIncomingEventRepository: RawIncomingEventRepository,
+    @Optional()
+    private readonly eventProcessingService?: EventProcessingService,
   ) {}
 
-  onModuleInit(): void {
-    void this.pollPendingOrRetryEvents();
+  async onModuleInit(): Promise<void> {
+    await this.pollPendingOrRetryEvents();
   }
 
   @Interval(eventProcessingSchedulerIntervalMs)
-  handlePollingInterval(): void {
-    void this.pollPendingOrRetryEvents();
+  async handlePollingInterval(): Promise<void> {
+    await this.pollPendingOrRetryEvents();
   }
 
   async pollPendingOrRetryEvents(): Promise<RawIncomingEventEntity[]> {
@@ -36,22 +43,37 @@ export class EventProcessingSchedulerService implements OnModuleInit {
     this.isPolling = true;
 
     try {
-      return await this.rawIncomingEventRepository.findBy([
+      const events = await this.rawIncomingEventRepository.findBy([
         { processingStatus: ProcessingStatus.Pending },
         { processingStatus: ProcessingStatus.Retry },
       ]);
+      const availableEvents = await this.filterAvailableEvents(events);
+
+      await this.processEvents(availableEvents);
+
+      return availableEvents;
     } finally {
       this.isPolling = false;
     }
   }
-}
 
-function getEventProcessingSchedulerIntervalMs(
-  value: string | undefined,
-): number {
-  const parsedValue = Number(value);
+  private async filterAvailableEvents(
+    events: RawIncomingEventEntity[],
+  ): Promise<RawIncomingEventEntity[]> {
+    await Promise.resolve();
 
-  return Number.isInteger(parsedValue) && parsedValue > 0
-    ? parsedValue
-    : DEFAULT_EVENT_PROCESSING_SCHEDULER_INTERVAL_MS;
+    const now = Date.now();
+
+    return events.filter((event) => Date.parse(event.availableAt) <= now);
+  }
+
+  private async processEvents(events: RawIncomingEventEntity[]): Promise<void> {
+    if (!this.eventProcessingService) {
+      return;
+    }
+
+    for (const event of events) {
+      await this.eventProcessingService.processEvent(event);
+    }
+  }
 }

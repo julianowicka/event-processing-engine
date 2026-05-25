@@ -25,8 +25,7 @@ describe('EventProcessingSchedulerService', () => {
       createRepository(findBy),
     );
 
-    service.onModuleInit();
-    await Promise.resolve();
+    await service.onModuleInit();
     expect(findBy).toHaveBeenCalledTimes(1);
   });
 
@@ -36,8 +35,7 @@ describe('EventProcessingSchedulerService', () => {
       createRepository(findBy),
     );
 
-    service.handlePollingInterval();
-    await Promise.resolve();
+    await service.handlePollingInterval();
     expect(findBy).toHaveBeenCalledTimes(1);
   });
 });
