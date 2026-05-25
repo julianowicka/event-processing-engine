@@ -12,7 +12,7 @@ services:
       PORT: 3000
       SQLITE_DB_PATH: /data/app.sqlite
     volumes:
-      - event_processing_data:/data
+      - event_processing_database:/data
     expose:
       - "3000"
     networks:
@@ -46,8 +46,8 @@ services:
           - event-processing-frontend
 
 volumes:
-  event_processing_data:
-    name: event_processing_data
+  event_processing_database:
+    name: event_processing_database
 
 networks:
   internal:

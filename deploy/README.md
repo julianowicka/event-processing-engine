@@ -3,26 +3,8 @@
 The production deployment runs alongside the existing Recruitment Tracker on
 the OVH VPS. Caddy remains the only public entry point. The frontend joins
 Caddy's existing `web` network and proxies `/api/*` to the API on an internal
-Docker network. SQLite data is kept in the named `event_processing_data`
+Docker network. SQLite data is kept in the named `event_processing_database`
 volume, outside the API container image.
-
-## Single-Migration Upgrade Reset
-
-The release that switches to the single initial TypeORM migration is not
-compatible with databases created by earlier schema layouts. Before deploying
-that release, accept that all existing event and order history will be lost,
-then reset the production SQLite volume:
-
-```bash
-cd /opt/apps/event-processing-engine
-docker compose -f docker-compose.prod.yml --env-file .env down
-docker volume rm event_processing_data
-IMAGE_TAG=<new-commit-sha> docker compose -f docker-compose.prod.yml --env-file .env pull
-IMAGE_TAG=<new-commit-sha> docker compose -f docker-compose.prod.yml --env-file .env up -d --remove-orphans
-```
-
-Do this only for the intentional destructive upgrade. Subsequent deployments
-must retain `event_processing_data`.
 
 ## One-Time VPS Setup
 
@@ -139,7 +121,7 @@ After deployment:
 
 ```bash
 curl -fsS https://event-processing-engine.julianowicka.dev/api/health
-docker volume inspect event_processing_data
+docker volume inspect event_processing_database
 docker ps --filter name=event-processing
 ```
 
@@ -153,5 +135,4 @@ IMAGE_TAG=<previous-commit-sha> docker compose -f docker-compose.prod.yml --env-
 IMAGE_TAG=<previous-commit-sha> docker compose -f docker-compose.prod.yml --env-file .env up -d --remove-orphans
 ```
 
-Except for the documented single-migration reset, do not remove
-`event_processing_data`; it contains the SQLite database.
+Do not remove `event_processing_database`; it contains the SQLite database.
