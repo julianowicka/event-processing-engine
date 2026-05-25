@@ -7,7 +7,7 @@ export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
   @Get(':id')
-  getOrder(@Param('id') id: string): OrderDetailsResponse {
+  getOrder(@Param('id') id: string): Promise<OrderDetailsResponse> {
     return this.ordersService.getOrderDetails(id);
   }
 }

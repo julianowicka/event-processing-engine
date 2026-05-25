@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { SqliteService } from '../../database/sqlite.service';
+import { EntityManager } from 'typeorm';
+import { DatabaseService } from '../../database/database.service';
 import {
   EngineDecision,
   OrderStatus,
@@ -24,7 +25,7 @@ export class EventJobCompletionService {
   private readonly maxAttempts = 3;
 
   constructor(
-    private readonly sqliteService: SqliteService,
+    private readonly databaseService: DatabaseService,
     private readonly jobRepository: EventJobRepository,
     private readonly orderRepository: OrderRepository,
     private readonly auditRepository: EventAuditRepository,
@@ -32,86 +33,136 @@ export class EventJobCompletionService {
     private readonly decisionService: EventDecisionService,
   ) {}
 
-  completeResult(
+  async completeResult(
     job: ProcessingJobRow,
     event: ValidOrderEvent,
     result: OrderEventStateMachineResult,
     processingTimeMs: number,
-  ): ProcessJobOutcome {
+    manager: EntityManager,
+  ): Promise<ProcessJobOutcome> {
     switch (result.kind) {
       case OrderEventStateMachineResultKind.Created:
-        return this.completeOrderCreated(job, event, result, processingTimeMs);
+        return this.completeOrderCreated(
+          job,
+          event,
+          result,
+          processingTimeMs,
+          manager,
+        );
       case OrderEventStateMachineResultKind.Mutation:
-        return this.completeMutation(job, event, result, processingTimeMs);
+        return this.completeMutation(
+          job,
+          event,
+          result,
+          processingTimeMs,
+          manager,
+        );
       case OrderEventStateMachineResultKind.Rejected:
-        this.completeFinalDecision(
+        await this.completeFinalDecision(
           job,
           event,
           result.decision,
           processingTimeMs,
+          manager,
         );
         return { orderChanged: false };
       case OrderEventStateMachineResultKind.Deferred:
-        this.completeDeferred(job, event, result.decision, processingTimeMs);
+        await this.completeDeferred(
+          job,
+          event,
+          result.decision,
+          processingTimeMs,
+          manager,
+        );
         return { orderChanged: false };
     }
   }
 
-  completeFinalDecision(
+  async completeFinalDecision(
     job: ProcessingJobRow,
     event: Partial<ValidOrderEvent>,
     decision: DecisionDescription,
     processingTimeMs: number,
-  ): void {
-    const result = this.auditRepository.writeDecision({
-      job,
-      event,
-      decision: decision.decision,
-      reasonCode: decision.reasonCode,
-      reasonMessage: decision.reasonMessage,
-      details: decision.details,
-      processingTimeMs,
-    });
+    manager: EntityManager,
+  ): Promise<void> {
+    const result = await this.auditRepository.writeDecision(
+      {
+        job,
+        event,
+        decision: decision.decision,
+        reasonCode: decision.reasonCode,
+        reasonMessage: decision.reasonMessage,
+        details: decision.details,
+        processingTimeMs,
+      },
+      manager,
+    );
 
-    this.auditRepository.updateFinalStats(decision.decision, processingTimeMs);
-    this.jobRepository.markFinalDecision(
+    await this.auditRepository.updateFinalStats(
+      decision.decision,
+      processingTimeMs,
+      manager,
+    );
+    await this.jobRepository.markFinalDecision(
       job,
       result.decisionId,
       decision.reasonCode,
+      manager,
     );
   }
 
-  recordTechnicalFailure(job: ProcessingJobRow, errorMessage: string): void {
-    this.sqliteService.transaction(() => {
+  recordTechnicalFailure(
+    job: ProcessingJobRow,
+    errorMessage: string,
+  ): Promise<void> {
+    return this.databaseService.transaction(async (manager) => {
       const attempts = job.attempts + 1;
 
       if (attempts < this.maxAttempts) {
-        this.jobRepository.scheduleTechnicalRetry(job, attempts, errorMessage);
+        await this.jobRepository.scheduleTechnicalRetry(
+          job,
+          attempts,
+          errorMessage,
+          manager,
+        );
         return;
       }
 
       const decision = this.decisionService.processingError(errorMessage);
-      const result = this.auditRepository.writeDecision({
-        job,
-        event: this.validationService.partialEventFromJob(job),
-        decision: decision.decision,
-        reasonCode: decision.reasonCode,
-        reasonMessage: decision.reasonMessage,
-        processingTimeMs: 0,
-      });
+      const result = await this.auditRepository.writeDecision(
+        {
+          job,
+          event: this.validationService.partialEventFromJob(job),
+          decision: decision.decision,
+          reasonCode: decision.reasonCode,
+          reasonMessage: decision.reasonMessage,
+          processingTimeMs: 0,
+        },
+        manager,
+      );
 
-      this.auditRepository.updateFinalStats(EngineDecision.Failed, 0);
-      this.auditRepository.insertDeadLetterEvent(job, errorMessage, attempts);
-      this.jobRepository.markDeadLettered(
+      await this.auditRepository.updateFinalStats(
+        EngineDecision.Failed,
+        0,
+        manager,
+      );
+      await this.auditRepository.insertDeadLetterEvent(
+        job,
+        errorMessage,
+        attempts,
+        manager,
+      );
+      await this.jobRepository.markDeadLettered(
         job,
         attempts,
         errorMessage,
         result.decisionId,
+        manager,
       );
     });
   }
 
-  private completeOrderCreated(
+  private async completeOrderCreated(
     job: ProcessingJobRow,
     event: ValidOrderEvent,
     result: Extract<
@@ -119,37 +170,42 @@ export class EventJobCompletionService {
       { kind: OrderEventStateMachineResultKind.Created }
     >,
     processingTimeMs: number,
-  ): ProcessJobOutcome {
+    manager: EntityManager,
+  ): Promise<ProcessJobOutcome> {
     const createdOrder = result.createdOrder;
 
-    this.orderRepository.createOrder(
+    await this.orderRepository.createOrder(
       event,
       createdOrder.amountMinor,
       createdOrder.currency,
+      manager,
     );
-    this.orderRepository.upsertFieldVersion(
+    await this.orderRepository.upsertFieldVersion(
       event.orderId,
       OrderVersionedField.Status,
       event,
+      manager,
     );
 
     if (createdOrder.amountMinor !== null) {
-      this.orderRepository.upsertFieldVersion(
+      await this.orderRepository.upsertFieldVersion(
         event.orderId,
         OrderVersionedField.AmountMinor,
         event,
+        manager,
       );
     }
 
     if (createdOrder.currency !== null) {
-      this.orderRepository.upsertFieldVersion(
+      await this.orderRepository.upsertFieldVersion(
         event.orderId,
         OrderVersionedField.Currency,
         event,
+        manager,
       );
     }
 
-    this.auditRepository.writeHistory(
+    await this.auditRepository.writeHistory(
       event,
       null,
       OrderStatus.Created,
@@ -157,14 +213,24 @@ export class EventJobCompletionService {
       {},
       result.decision.decision,
       result.decision.reasonCode,
+      manager,
     );
-    this.completeFinalDecision(job, event, result.decision, processingTimeMs);
-    this.jobRepository.releaseDeferredJobsForOrder(event.orderId);
+    await this.completeFinalDecision(
+      job,
+      event,
+      result.decision,
+      processingTimeMs,
+      manager,
+    );
+    await this.jobRepository.releaseDeferredJobsForOrder(
+      event.orderId,
+      manager,
+    );
 
     return { orderChanged: true };
   }
 
-  private completeMutation(
+  private async completeMutation(
     job: ProcessingJobRow,
     event: ValidOrderEvent,
     result: Extract<
@@ -172,16 +238,26 @@ export class EventJobCompletionService {
       { kind: OrderEventStateMachineResultKind.Mutation }
     >,
     processingTimeMs: number,
-  ): ProcessJobOutcome {
-    this.orderRepository.updateOrderState(event, result.nextState);
+    manager: EntityManager,
+  ): Promise<ProcessJobOutcome> {
+    await this.orderRepository.updateOrderState(
+      event,
+      result.nextState,
+      manager,
+    );
 
     for (const fieldName of Object.keys(
       result.fields.changed,
     ) as OrderVersionedField[]) {
-      this.orderRepository.upsertFieldVersion(event.orderId, fieldName, event);
+      await this.orderRepository.upsertFieldVersion(
+        event.orderId,
+        fieldName,
+        event,
+        manager,
+      );
     }
 
-    this.auditRepository.writeHistory(
+    await this.auditRepository.writeHistory(
       event,
       result.order.status,
       result.nextState.status,
@@ -189,28 +265,42 @@ export class EventJobCompletionService {
       result.fields.skipped,
       result.decision.decision,
       result.decision.reasonCode,
+      manager,
     );
-    this.completeFinalDecision(job, event, result.decision, processingTimeMs);
-    this.jobRepository.releaseDeferredJobsForOrder(event.orderId);
+    await this.completeFinalDecision(
+      job,
+      event,
+      result.decision,
+      processingTimeMs,
+      manager,
+    );
+    await this.jobRepository.releaseDeferredJobsForOrder(
+      event.orderId,
+      manager,
+    );
 
     return { orderChanged: true };
   }
 
-  private completeDeferred(
+  private async completeDeferred(
     job: ProcessingJobRow,
     event: ValidOrderEvent,
     decision: DecisionDescription,
     processingTimeMs: number,
-  ): void {
-    const result = this.auditRepository.writeDecision({
-      job,
-      event,
-      decision: decision.decision,
-      reasonCode: decision.reasonCode,
-      reasonMessage: decision.reasonMessage,
-      processingTimeMs,
-    });
+    manager: EntityManager,
+  ): Promise<void> {
+    const result = await this.auditRepository.writeDecision(
+      {
+        job,
+        event,
+        decision: decision.decision,
+        reasonCode: decision.reasonCode,
+        reasonMessage: decision.reasonMessage,
+        processingTimeMs,
+      },
+      manager,
+    );
 
-    this.jobRepository.markDeferred(job, result.decisionId);
+    await this.jobRepository.markDeferred(job, result.decisionId, manager);
   }
 }

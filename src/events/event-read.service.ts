@@ -1,95 +1,39 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import type { DatabaseSync as DatabaseSyncInstance } from 'node:sqlite';
+import { InjectRepository } from '@nestjs/typeorm';
+import { In, Repository } from 'typeorm';
 import { parseJsonObject, parseJsonValue } from '../common/json.util';
-import { asSqliteRows } from '../database/sqlite-row.util';
-import { SqliteService } from '../database/sqlite.service';
+import {
+  EventDecisionEntity,
+  EventProcessingJobEntity,
+  OrderHistoryEntity,
+  RawIncomingEventEntity,
+} from '../database/entities';
 import type {
-  EngineDecision,
   EventDecisionDetails,
   EventDeliveryDetails,
   EventDetailsResponse,
   EventHistoryDetails,
-  JobStatus,
-  OrderHistoryDecision,
-  OrderStatus,
-  ReasonCode,
 } from './event.types';
-
-interface EventDecisionRow {
-  id: number;
-  raw_incoming_event_id: number;
-  event_processing_job_id: number;
-  event_id: string | null;
-  order_id: string | null;
-  type: string | null;
-  timestamp: number | null;
-  decision: EngineDecision;
-  reason_code: ReasonCode;
-  reason_message: string;
-  details_json: string;
-  processing_time_ms: number;
-  created_at: string;
-}
-
-interface EventDeliveryRow {
-  raw_incoming_event_id: number;
-  event_id: string | null;
-  order_id: string | null;
-  type: string | null;
-  event_timestamp: number | null;
-  raw_event_json: string;
-  payload_json: string | null;
-  received_at: string;
-  job_id: number | null;
-  job_status: JobStatus | null;
-  available_at: string | null;
-  attempts: number | null;
-  last_reason_code: string | null;
-  job_created_at: string | null;
-  job_updated_at: string | null;
-  decision_id: number | null;
-  decision_raw_incoming_event_id: number | null;
-  decision_event_processing_job_id: number | null;
-  decision_event_id: string | null;
-  decision_order_id: string | null;
-  decision_type: string | null;
-  decision_timestamp: number | null;
-  decision: EngineDecision | null;
-  reason_code: ReasonCode | null;
-  reason_message: string | null;
-  details_json: string | null;
-  processing_time_ms: number | null;
-  decision_created_at: string | null;
-}
-
-interface EventHistoryRow {
-  id: number;
-  order_id: string;
-  event_id: string;
-  event_type: string;
-  event_timestamp: number;
-  processed_at: string;
-  from_status: OrderStatus | null;
-  to_status: OrderStatus;
-  changed_fields_json: string;
-  skipped_fields_json: string;
-  decision: OrderHistoryDecision;
-  reason_code: string;
-  created_at: string;
-}
 
 @Injectable()
 export class EventReadService {
-  private readonly db: DatabaseSyncInstance;
+  constructor(
+    @InjectRepository(RawIncomingEventEntity)
+    private readonly rawEvents: Repository<RawIncomingEventEntity>,
+    @InjectRepository(EventProcessingJobEntity)
+    private readonly jobs: Repository<EventProcessingJobEntity>,
+    @InjectRepository(EventDecisionEntity)
+    private readonly decisions: Repository<EventDecisionEntity>,
+    @InjectRepository(OrderHistoryEntity)
+    private readonly history: Repository<OrderHistoryEntity>,
+  ) {}
 
-  constructor(sqliteService: SqliteService) {
-    this.db = sqliteService.connection;
-  }
-
-  getEventDetails(eventId: string): EventDetailsResponse {
-    const deliveries = this.readDeliveries(eventId);
-    const decisions = this.readDecisions(eventId);
-    const history = this.readHistory(eventId);
+  async getEventDetails(eventId: string): Promise<EventDetailsResponse> {
+    const [deliveries, decisions, history] = await Promise.all([
+      this.readDeliveries(eventId),
+      this.readDecisions(eventId),
+      this.readHistory(eventId),
+    ]);
 
     if (
       deliveries.length === 0 &&
@@ -108,180 +52,115 @@ export class EventReadService {
     };
   }
 
-  private readDeliveries(eventId: string): EventDeliveryDetails[] {
-    return asSqliteRows<EventDeliveryRow>(
-      this.db
-        .prepare(
-          `
-            SELECT
-              raw.id AS raw_incoming_event_id,
-              raw.event_id,
-              raw.order_id,
-              raw.type,
-              raw.event_timestamp,
-              raw.raw_event_json,
-              raw.payload_json,
-              raw.received_at,
-              jobs.id AS job_id,
-              jobs.status AS job_status,
-              jobs.available_at,
-              jobs.attempts,
-              jobs.last_reason_code,
-              jobs.created_at AS job_created_at,
-              jobs.updated_at AS job_updated_at,
-              decisions.id AS decision_id,
-              decisions.raw_incoming_event_id AS decision_raw_incoming_event_id,
-              decisions.event_processing_job_id AS decision_event_processing_job_id,
-              decisions.event_id AS decision_event_id,
-              decisions.order_id AS decision_order_id,
-              decisions.type AS decision_type,
-              decisions.timestamp AS decision_timestamp,
-              decisions.decision,
-              decisions.reason_code,
-              decisions.reason_message,
-              decisions.details_json,
-              decisions.processing_time_ms,
-              decisions.created_at AS decision_created_at
-            FROM raw_incoming_events raw
-            LEFT JOIN event_processing_jobs jobs
-              ON jobs.raw_incoming_event_id = raw.id
-            LEFT JOIN event_decisions decisions
-              ON decisions.id = jobs.last_decision_id
-            WHERE raw.event_id = ?
-            ORDER BY raw.id ASC
-          `,
-        )
-        .all(eventId),
-    ).map((row) => ({
-      rawIncomingEventId: row.raw_incoming_event_id,
-      eventId: row.event_id,
-      orderId: row.order_id,
-      type: row.type,
-      timestamp: row.event_timestamp,
-      receivedAt: row.received_at,
-      payload:
-        row.payload_json === null ? null : parseJsonObject(row.payload_json),
-      rawEvent: parseJsonValue(row.raw_event_json),
-      processingJob:
-        row.job_id === null
-          ? null
-          : {
-              id: row.job_id,
-              status: row.job_status!,
-              availableAt: row.available_at!,
-              attempts: row.attempts!,
-              lastReasonCode: row.last_reason_code,
-              createdAt: row.job_created_at!,
-              updatedAt: row.job_updated_at!,
-              latestDecision:
-                row.decision_id === null
-                  ? null
-                  : this.mapDecision({
-                      id: row.decision_id,
-                      raw_incoming_event_id:
-                        row.decision_raw_incoming_event_id!,
-                      event_processing_job_id:
-                        row.decision_event_processing_job_id!,
-                      event_id: row.decision_event_id,
-                      order_id: row.decision_order_id,
-                      type: row.decision_type,
-                      timestamp: row.decision_timestamp,
-                      decision: row.decision!,
-                      reason_code: row.reason_code!,
-                      reason_message: row.reason_message!,
-                      details_json: row.details_json!,
-                      processing_time_ms: row.processing_time_ms!,
-                      created_at: row.decision_created_at!,
-                    }),
-            },
+  private async readDeliveries(
+    eventId: string,
+  ): Promise<EventDeliveryDetails[]> {
+    const raws = await this.rawEvents.find({
+      where: { eventId },
+      order: { id: 'ASC' },
+    });
+
+    if (raws.length === 0) {
+      return [];
+    }
+
+    const jobs = await this.jobs.findBy({
+      rawIncomingEventId: In(raws.map((raw) => raw.id)),
+    });
+    const jobsByDelivery = new Map(
+      jobs.map((job) => [job.rawIncomingEventId, job]),
+    );
+    const decisionIds = jobs
+      .map((job) => job.lastDecisionId)
+      .filter((id): id is number => id !== null);
+    const decisions =
+      decisionIds.length === 0
+        ? []
+        : await this.decisions.findBy({ id: In(decisionIds) });
+    const decisionsById = new Map(
+      decisions.map((decision) => [decision.id, decision]),
+    );
+
+    return raws.map((raw) => {
+      const job = jobsByDelivery.get(raw.id);
+      const decision = job?.lastDecisionId
+        ? decisionsById.get(job.lastDecisionId)
+        : undefined;
+
+      return {
+        rawIncomingEventId: raw.id,
+        eventId: raw.eventId,
+        orderId: raw.orderId,
+        type: raw.type,
+        timestamp: raw.eventTimestamp,
+        receivedAt: raw.receivedAt,
+        payload:
+          raw.payloadJson === null ? null : parseJsonObject(raw.payloadJson),
+        rawEvent: parseJsonValue(raw.rawEventJson),
+        processingJob: job
+          ? {
+              id: job.id,
+              status: job.status,
+              availableAt: job.availableAt,
+              attempts: job.attempts,
+              lastReasonCode: job.lastReasonCode,
+              createdAt: job.createdAt,
+              updatedAt: job.updatedAt,
+              latestDecision: decision ? this.mapDecision(decision) : null,
+            }
+          : null,
+      };
+    });
+  }
+
+  private async readDecisions(
+    eventId: string,
+  ): Promise<EventDecisionDetails[]> {
+    const decisions = await this.decisions.find({
+      where: { eventId },
+      order: { id: 'ASC' },
+    });
+    return decisions.map((decision) => this.mapDecision(decision));
+  }
+
+  private async readHistory(eventId: string): Promise<EventHistoryDetails[]> {
+    const history = await this.history.find({
+      where: { eventId },
+      order: { id: 'ASC' },
+    });
+
+    return history.map((entry) => ({
+      id: entry.id,
+      orderId: entry.orderId,
+      eventId: entry.eventId,
+      type: entry.eventType,
+      timestamp: entry.eventTimestamp,
+      processedAt: entry.processedAt,
+      fromStatus: entry.fromStatus,
+      toStatus: entry.toStatus,
+      changedFields: parseJsonObject(entry.changedFieldsJson),
+      skippedFields: parseJsonObject(entry.skippedFieldsJson),
+      decision: entry.decision,
+      reasonCode: entry.reasonCode,
+      createdAt: entry.createdAt,
     }));
   }
 
-  private readDecisions(eventId: string): EventDecisionDetails[] {
-    return asSqliteRows<EventDecisionRow>(
-      this.db
-        .prepare(
-          `
-            SELECT
-              id,
-              raw_incoming_event_id,
-              event_processing_job_id,
-              event_id,
-              order_id,
-              type,
-              timestamp,
-              decision,
-              reason_code,
-              reason_message,
-              details_json,
-              processing_time_ms,
-              created_at
-            FROM event_decisions
-            WHERE event_id = ?
-            ORDER BY id ASC
-          `,
-        )
-        .all(eventId),
-    ).map((row) => this.mapDecision(row));
-  }
-
-  private readHistory(eventId: string): EventHistoryDetails[] {
-    return asSqliteRows<EventHistoryRow>(
-      this.db
-        .prepare(
-          `
-            SELECT
-              id,
-              order_id,
-              event_id,
-              event_type,
-              event_timestamp,
-              processed_at,
-              from_status,
-              to_status,
-              changed_fields_json,
-              skipped_fields_json,
-              decision,
-              reason_code,
-              created_at
-            FROM order_history
-            WHERE event_id = ?
-            ORDER BY id ASC
-          `,
-        )
-        .all(eventId),
-    ).map((row) => ({
-      id: row.id,
-      orderId: row.order_id,
-      eventId: row.event_id,
-      type: row.event_type,
-      timestamp: row.event_timestamp,
-      processedAt: row.processed_at,
-      fromStatus: row.from_status,
-      toStatus: row.to_status,
-      changedFields: parseJsonObject(row.changed_fields_json),
-      skippedFields: parseJsonObject(row.skipped_fields_json),
-      decision: row.decision,
-      reasonCode: row.reason_code,
-      createdAt: row.created_at,
-    }));
-  }
-
-  private mapDecision(row: EventDecisionRow): EventDecisionDetails {
+  private mapDecision(decision: EventDecisionEntity): EventDecisionDetails {
     return {
-      id: row.id,
-      rawIncomingEventId: row.raw_incoming_event_id,
-      processingJobId: row.event_processing_job_id,
-      eventId: row.event_id,
-      orderId: row.order_id,
-      type: row.type,
-      timestamp: row.timestamp,
-      decision: row.decision,
-      reasonCode: row.reason_code,
-      reasonMessage: row.reason_message,
-      details: parseJsonObject(row.details_json),
-      processingTimeMs: row.processing_time_ms,
-      createdAt: row.created_at,
+      id: decision.id,
+      rawIncomingEventId: decision.rawIncomingEventId,
+      processingJobId: decision.eventProcessingJobId,
+      eventId: decision.eventId,
+      orderId: decision.orderId,
+      type: decision.type,
+      timestamp: decision.timestamp,
+      decision: decision.decision,
+      reasonCode: decision.reasonCode,
+      reasonMessage: decision.reasonMessage,
+      details: parseJsonObject(decision.detailsJson),
+      processingTimeMs: decision.processingTimeMs,
+      createdAt: decision.createdAt,
     };
   }
 

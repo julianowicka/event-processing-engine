@@ -1,8 +1,17 @@
 import { Module } from '@nestjs/common';
-import { SqliteService } from './sqlite.service';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { DatabaseService } from './database.service';
+import { databaseEntities } from './entities';
+import { createTypeOrmOptions } from './typeorm.config';
 
 @Module({
-  providers: [SqliteService],
-  exports: [SqliteService],
+  imports: [
+    TypeOrmModule.forRootAsync({
+      useFactory: createTypeOrmOptions,
+    }),
+    TypeOrmModule.forFeature(databaseEntities),
+  ],
+  providers: [DatabaseService],
+  exports: [DatabaseService, TypeOrmModule],
 })
 export class DatabaseModule {}

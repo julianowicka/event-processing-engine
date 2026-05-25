@@ -1,207 +1,160 @@
 import { Injectable } from '@nestjs/common';
-import type { DatabaseSync as DatabaseSyncInstance } from 'node:sqlite';
-import { asSqliteRow } from '../../database/sqlite-row.util';
-import { SqliteService } from '../../database/sqlite.service';
+import { EntityManager } from 'typeorm';
+import {
+  OrderEntity,
+  OrderFieldVersionEntity,
+  ProcessedEventKeyEntity,
+} from '../../database/entities';
 import { OrderStatus, OrderVersionedField } from '../event.types';
 import type {
   OrderRow,
-  ValidOrderEvent,
   ProcessingJobRow,
+  ValidOrderEvent,
 } from '../event.types';
 import type { NextOrderState } from './event-processing.types';
 
 @Injectable()
 export class OrderRepository {
-  private readonly db: DatabaseSyncInstance;
-
-  constructor(sqliteService: SqliteService) {
-    this.db = sqliteService.connection;
-  }
-
-  createOrder(
+  async createOrder(
     event: ValidOrderEvent,
     amountMinor: number | null,
     currency: string | null,
-  ): void {
+    manager: EntityManager,
+  ): Promise<void> {
     const now = new Date().toISOString();
 
-    this.db
-      .prepare(
-        `
-          INSERT INTO orders (
-            order_id,
-            status,
-            amount_minor,
-            currency,
-            paid_amount_minor,
-            refunded_amount_minor,
-            version,
-            max_accepted_event_timestamp,
-            last_accepted_event_id,
-            created_at,
-            updated_at
-          )
-          VALUES (?, ?, ?, ?, 0, 0, 1, ?, ?, ?, ?)
-        `,
-      )
-      .run(
-        event.orderId,
-        OrderStatus.Created,
-        amountMinor,
-        currency,
-        event.timestamp,
-        event.eventId,
-        now,
-        now,
-      );
+    await manager.getRepository(OrderEntity).insert({
+      orderId: event.orderId,
+      status: OrderStatus.Created,
+      amountMinor,
+      currency,
+      paidAmountMinor: 0,
+      refundedAmountMinor: 0,
+      version: 1,
+      maxAcceptedEventTimestamp: event.timestamp,
+      lastAcceptedEventId: event.eventId,
+      createdAt: now,
+      updatedAt: now,
+    });
   }
 
-  updateOrderState(event: ValidOrderEvent, nextState: NextOrderState): void {
-    this.db
-      .prepare(
-        `
-          UPDATE orders
-          SET
-            status = ?,
-            amount_minor = ?,
-            currency = ?,
-            paid_amount_minor = ?,
-            refunded_amount_minor = ?,
-            version = version + 1,
-            max_accepted_event_timestamp = MAX(max_accepted_event_timestamp, ?),
-            last_accepted_event_id = ?,
-            updated_at = ?
-          WHERE order_id = ?
-        `,
-      )
-      .run(
-        nextState.status,
-        nextState.amountMinor,
-        nextState.currency,
-        nextState.paidAmountMinor,
-        nextState.refundedAmountMinor,
-        event.timestamp,
-        event.eventId,
-        new Date().toISOString(),
-        event.orderId,
-      );
+  async updateOrderState(
+    event: ValidOrderEvent,
+    nextState: NextOrderState,
+    manager: EntityManager,
+  ): Promise<void> {
+    const repository = manager.getRepository(OrderEntity);
+    const current = await repository.findOneByOrFail({
+      orderId: event.orderId,
+    });
+
+    await repository.update(
+      { orderId: event.orderId },
+      {
+        status: nextState.status,
+        amountMinor: nextState.amountMinor,
+        currency: nextState.currency,
+        paidAmountMinor: nextState.paidAmountMinor,
+        refundedAmountMinor: nextState.refundedAmountMinor,
+        version: current.version + 1,
+        maxAcceptedEventTimestamp: Math.max(
+          current.maxAcceptedEventTimestamp,
+          event.timestamp,
+        ),
+        lastAcceptedEventId: event.eventId,
+        updatedAt: new Date().toISOString(),
+      },
+    );
   }
 
-  claimDeduplicationKey(
+  async claimDeduplicationKey(
     job: ProcessingJobRow,
     event: ValidOrderEvent,
-  ): boolean {
-    const existing = this.db
-      .prepare(
-        `
-          SELECT first_raw_incoming_event_id
-          FROM processed_event_keys
-          WHERE event_id = ?
-        `,
-      )
-      .get(event.eventId) as
-      | { first_raw_incoming_event_id: number }
-      | undefined;
+    manager: EntityManager,
+  ): Promise<boolean> {
+    const repository = manager.getRepository(ProcessedEventKeyEntity);
+    const existing = await repository.findOneBy({ eventId: event.eventId });
 
     if (existing) {
-      return existing.first_raw_incoming_event_id === job.raw_incoming_event_id;
+      return existing.firstRawIncomingEventId === job.raw_incoming_event_id;
     }
 
-    this.db
-      .prepare(
-        `
-          INSERT INTO processed_event_keys (
-            event_id,
-            first_raw_incoming_event_id,
-            order_id,
-            first_seen_at
-          )
-          VALUES (?, ?, ?, ?)
-        `,
-      )
-      .run(
-        event.eventId,
-        job.raw_incoming_event_id,
-        event.orderId,
-        new Date().toISOString(),
-      );
-
+    await repository.insert({
+      eventId: event.eventId,
+      firstRawIncomingEventId: job.raw_incoming_event_id,
+      orderId: event.orderId,
+      firstSeenAt: new Date().toISOString(),
+    });
     return true;
   }
 
-  findOrder(orderId: string): OrderRow | null {
-    const row = asSqliteRow<OrderRow>(
-      this.db
-        .prepare(
-          `
-          SELECT
-            order_id,
-            status,
-            amount_minor,
-            currency,
-            paid_amount_minor,
-            refunded_amount_minor,
-            version,
-            max_accepted_event_timestamp,
-            last_accepted_event_id,
-            created_at,
-            updated_at
-          FROM orders
-          WHERE order_id = ?
-        `,
-        )
-        .get(orderId),
+  async findOrder(
+    orderId: string,
+    manager: EntityManager,
+  ): Promise<OrderRow | null> {
+    const order = await manager.getRepository(OrderEntity).findOneBy({
+      orderId,
+    });
+
+    return order ? this.toOrderRow(order) : null;
+  }
+
+  async findApplicableFields(
+    orderId: string,
+    event: ValidOrderEvent,
+    manager: EntityManager,
+  ): Promise<Set<OrderVersionedField>> {
+    const versions = await manager
+      .getRepository(OrderFieldVersionEntity)
+      .findBy({
+        orderId,
+      });
+    const byField = new Map(
+      versions.map((version) => [
+        version.fieldName,
+        version.lastEventTimestamp,
+      ]),
     );
 
-    return row ?? null;
+    return new Set(
+      Object.values(OrderVersionedField).filter((fieldName) => {
+        const timestamp = byField.get(fieldName);
+        return timestamp === undefined || event.timestamp > timestamp;
+      }),
+    );
   }
 
-  canApplyField(
+  async upsertFieldVersion(
     orderId: string,
     fieldName: OrderVersionedField,
     event: ValidOrderEvent,
-  ): boolean {
-    const row = this.db
-      .prepare(
-        `
-          SELECT last_event_timestamp
-          FROM order_field_versions
-          WHERE order_id = ? AND field_name = ?
-        `,
-      )
-      .get(orderId, fieldName) as { last_event_timestamp: number } | undefined;
-
-    return !row || event.timestamp > row.last_event_timestamp;
-  }
-
-  upsertFieldVersion(
-    orderId: string,
-    fieldName: OrderVersionedField,
-    event: ValidOrderEvent,
-  ): void {
-    this.db
-      .prepare(
-        `
-          INSERT INTO order_field_versions (
-            order_id,
-            field_name,
-            last_event_timestamp,
-            last_event_id,
-            updated_at
-          )
-          VALUES (?, ?, ?, ?, ?)
-          ON CONFLICT(order_id, field_name) DO UPDATE SET
-            last_event_timestamp = excluded.last_event_timestamp,
-            last_event_id = excluded.last_event_id,
-            updated_at = excluded.updated_at
-        `,
-      )
-      .run(
+    manager: EntityManager,
+  ): Promise<void> {
+    await manager.getRepository(OrderFieldVersionEntity).upsert(
+      {
         orderId,
         fieldName,
-        event.timestamp,
-        event.eventId,
-        new Date().toISOString(),
-      );
+        lastEventTimestamp: event.timestamp,
+        lastEventId: event.eventId,
+        updatedAt: new Date().toISOString(),
+      },
+      ['orderId', 'fieldName'],
+    );
+  }
+
+  private toOrderRow(order: OrderEntity): OrderRow {
+    return {
+      order_id: order.orderId,
+      status: order.status,
+      amount_minor: order.amountMinor,
+      currency: order.currency,
+      paid_amount_minor: order.paidAmountMinor,
+      refunded_amount_minor: order.refundedAmountMinor,
+      version: order.version,
+      max_accepted_event_timestamp: order.maxAcceptedEventTimestamp,
+      last_accepted_event_id: order.lastAcceptedEventId,
+      created_at: order.createdAt,
+      updated_at: order.updatedAt,
+    };
   }
 }

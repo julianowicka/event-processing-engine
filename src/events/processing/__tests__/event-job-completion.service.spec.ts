@@ -1,5 +1,6 @@
 import { Test } from '@nestjs/testing';
-import { SqliteService } from '../../../database/sqlite.service';
+import type { EntityManager } from 'typeorm';
+import { DatabaseService } from '../../../database/database.service';
 import {
   EngineDecision,
   JobStatus,
@@ -21,7 +22,7 @@ import { EventValidationService } from '../event-validation.service';
 import { OrderRepository } from '../order.repository';
 
 describe('EventJobCompletionService', () => {
-  let sqliteService: { transaction: jest.Mock };
+  let databaseService: { transaction: jest.Mock };
   let jobRepository: {
     markFinalDecision: jest.Mock;
     markDeferred: jest.Mock;
@@ -43,10 +44,14 @@ describe('EventJobCompletionService', () => {
   let validationService: { partialEventFromJob: jest.Mock };
   let service: EventJobCompletionService;
   const decisionService = new EventDecisionService();
+  const manager = {} as EntityManager;
 
   beforeEach(async () => {
-    sqliteService = {
-      transaction: jest.fn((action: () => void) => action()),
+    databaseService = {
+      transaction: jest.fn(
+        (action: (entityManager: EntityManager) => Promise<void>) =>
+          action(manager),
+      ),
     };
     jobRepository = {
       markFinalDecision: jest.fn(),
@@ -61,7 +66,7 @@ describe('EventJobCompletionService', () => {
       upsertFieldVersion: jest.fn(),
     };
     auditRepository = {
-      writeDecision: jest.fn(() => ({ decisionId: 17 })),
+      writeDecision: jest.fn().mockResolvedValue({ decisionId: 17 }),
       updateFinalStats: jest.fn(),
       writeHistory: jest.fn(),
       insertDeadLetterEvent: jest.fn(),
@@ -75,7 +80,7 @@ describe('EventJobCompletionService', () => {
     const module = await Test.createTestingModule({
       providers: [
         EventJobCompletionService,
-        { provide: SqliteService, useValue: sqliteService },
+        { provide: DatabaseService, useValue: databaseService },
         { provide: EventJobRepository, useValue: jobRepository },
         { provide: OrderRepository, useValue: orderRepository },
         { provide: EventAuditRepository, useValue: auditRepository },
@@ -87,7 +92,7 @@ describe('EventJobCompletionService', () => {
     service = module.get(EventJobCompletionService);
   });
 
-  it('persists accepted order creation and releases deferred jobs', () => {
+  it('persists accepted order creation and releases deferred jobs', async () => {
     const eventItem = event(SupportedEventType.OrderCreated);
     const changedFields = {
       status: OrderStatus.Created,
@@ -96,7 +101,7 @@ describe('EventJobCompletionService', () => {
     };
     const decision = decisionService.orderCreated(eventItem, changedFields);
 
-    expect(
+    await expect(
       service.completeResult(
         job(),
         eventItem,
@@ -110,13 +115,15 @@ describe('EventJobCompletionService', () => {
           decision,
         },
         8,
+        manager,
       ),
-    ).toEqual({ orderChanged: true });
+    ).resolves.toEqual({ orderChanged: true });
 
     expect(orderRepository.createOrder).toHaveBeenCalledWith(
       eventItem,
       10000,
       'PLN',
+      manager,
     );
     expect(orderRepository.upsertFieldVersion).toHaveBeenCalledTimes(3);
     expect(auditRepository.writeHistory).toHaveBeenCalledWith(
@@ -127,18 +134,21 @@ describe('EventJobCompletionService', () => {
       {},
       EngineDecision.Accepted,
       ReasonCode.Applied,
+      manager,
     );
     expect(jobRepository.markFinalDecision).toHaveBeenCalledWith(
       expect.any(Object),
       17,
       ReasonCode.Applied,
+      manager,
     );
     expect(jobRepository.releaseDeferredJobsForOrder).toHaveBeenCalledWith(
       eventItem.orderId,
+      manager,
     );
   });
 
-  it('persists a partially applied mutation with its evaluated decision', () => {
+  it('persists a partially applied mutation with its evaluated decision', async () => {
     const eventItem = event(SupportedEventType.OrderUpdated);
     const fields = {
       changed: { currency: 'EUR' },
@@ -152,7 +162,7 @@ describe('EventJobCompletionService', () => {
       throw new Error('Expected a partially applied decision');
     }
 
-    service.completeResult(
+    await service.completeResult(
       job(),
       eventItem,
       {
@@ -169,6 +179,7 @@ describe('EventJobCompletionService', () => {
         decision,
       },
       5,
+      manager,
     );
 
     expect(orderRepository.updateOrderState).toHaveBeenCalled();
@@ -181,33 +192,37 @@ describe('EventJobCompletionService', () => {
       fields.skipped,
       EngineDecision.PartiallyApplied,
       ReasonCode.PartialMerge,
+      manager,
     );
     expect(auditRepository.updateFinalStats).toHaveBeenCalledWith(
       EngineDecision.PartiallyApplied,
       5,
+      manager,
     );
   });
 
-  it('finalizes duplicates but leaves deferred outcomes retryable', () => {
+  it('finalizes duplicates but leaves deferred outcomes retryable', async () => {
     const eventItem = event(SupportedEventType.PaymentCaptured);
 
-    service.completeFinalDecision(
+    await service.completeFinalDecision(
       job(),
       eventItem,
       decisionService.duplicate(eventItem),
       2,
+      manager,
     );
 
     expect(jobRepository.markFinalDecision).toHaveBeenCalledWith(
       expect.any(Object),
       17,
       ReasonCode.DuplicateEvent,
+      manager,
     );
 
     jest.clearAllMocks();
-    auditRepository.writeDecision.mockReturnValue({ decisionId: 18 });
+    auditRepository.writeDecision.mockResolvedValue({ decisionId: 18 });
 
-    expect(
+    await expect(
       service.completeResult(
         job(),
         eventItem,
@@ -216,44 +231,53 @@ describe('EventJobCompletionService', () => {
           decision: decisionService.orderNotReady(eventItem),
         },
         3,
+        manager,
       ),
-    ).toEqual({ orderChanged: false });
+    ).resolves.toEqual({ orderChanged: false });
 
     expect(jobRepository.markDeferred).toHaveBeenCalledWith(
       expect.any(Object),
       18,
+      manager,
     );
     expect(auditRepository.updateFinalStats).not.toHaveBeenCalled();
     expect(jobRepository.markFinalDecision).not.toHaveBeenCalled();
   });
 
-  it('schedules retry before storing the final technical failure in DLQ', () => {
-    service.recordTechnicalFailure(job(), 'temporary failure');
+  it('schedules retry before storing the final technical failure in DLQ', async () => {
+    await service.recordTechnicalFailure(job(), 'temporary failure');
 
     expect(jobRepository.scheduleTechnicalRetry).toHaveBeenCalledWith(
       expect.any(Object),
       1,
       'temporary failure',
+      manager,
     );
     expect(auditRepository.insertDeadLetterEvent).not.toHaveBeenCalled();
 
-    service.recordTechnicalFailure(job({ attempts: 2 }), 'terminal failure');
+    await service.recordTechnicalFailure(
+      job({ attempts: 2 }),
+      'terminal failure',
+    );
 
     expect(validationService.partialEventFromJob).toHaveBeenCalled();
     expect(auditRepository.updateFinalStats).toHaveBeenCalledWith(
       EngineDecision.Failed,
       0,
+      manager,
     );
     expect(auditRepository.insertDeadLetterEvent).toHaveBeenCalledWith(
       expect.any(Object),
       'terminal failure',
       3,
+      manager,
     );
     expect(jobRepository.markDeadLettered).toHaveBeenCalledWith(
       expect.any(Object),
       3,
       'terminal failure',
       17,
+      manager,
     );
   });
 

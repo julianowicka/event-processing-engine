@@ -7,7 +7,7 @@ export class StatsController {
   constructor(private readonly statsService: StatsService) {}
 
   @Get()
-  getStats(): EngineStats {
+  getStats(): Promise<EngineStats> {
     return this.statsService.getStats();
   }
 }

@@ -1,15 +1,18 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { DataSource, type DataSourceOptions } from 'typeorm';
 import type { JsonObject } from '../../common/json.types';
-import { SqliteService } from '../../database/sqlite.service';
-import { EventProcessingService } from '../event-processing.service';
+import { DatabaseService } from '../../database/database.service';
 import {
-  EngineDecision,
-  JobStatus,
-  ReasonCode,
-  SupportedEventType,
-} from '../event.types';
+  EventDecisionEntity,
+  EventProcessingJobEntity,
+  RawIncomingEventEntity,
+} from '../../database/entities';
+import { createTypeOrmOptions } from '../../database/typeorm.config';
+import { EventProcessingService } from '../event-processing.service';
+import { EventsRepository } from '../events.repository';
+import { EngineDecision, ReasonCode, SupportedEventType } from '../event.types';
 import { EventAuditRepository } from '../processing/event-audit.repository';
 import { EventDecisionService } from '../processing/event-decision.service';
 import { EventJobCompletionService } from '../processing/event-job-completion.service';
@@ -28,16 +31,18 @@ import { OrderUpdatedEventFieldsService } from '../processing/state-machine/orde
 describe('EventProcessingService payment and refund guards', () => {
   let directory: string;
   let previousDbPath: string | undefined;
-  let sqliteService: SqliteService;
+  let dataSource: DataSource;
+  let eventsRepository: EventsRepository;
   let service: EventProcessingService;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     previousDbPath = process.env.SQLITE_DB_PATH;
     directory = fs.mkdtempSync(path.join(os.tmpdir(), 'event-processing-'));
     process.env.SQLITE_DB_PATH = path.join(directory, 'database.sqlite');
+    dataSource = new DataSource(createTypeOrmOptions() as DataSourceOptions);
+    await dataSource.initialize();
 
-    sqliteService = new SqliteService();
-
+    const databaseService = new DatabaseService(dataSource);
     const validationService = new EventValidationService();
     const statusTransitionRules = new OrderStatusTransitionRulesService();
     const orderUpdatedEventFields = new OrderUpdatedEventFieldsService(
@@ -45,11 +50,16 @@ describe('EventProcessingService payment and refund guards', () => {
       statusTransitionRules,
     );
     const decisionService = new EventDecisionService();
-    const jobRepository = new EventJobRepository(sqliteService);
-    const orderRepository = new OrderRepository(sqliteService);
-    const auditRepository = new EventAuditRepository(sqliteService);
+    const jobRepository = new EventJobRepository(databaseService);
+    const orderRepository = new OrderRepository();
+    const auditRepository = new EventAuditRepository();
+    eventsRepository = new EventsRepository(
+      databaseService,
+      dataSource.getRepository(RawIncomingEventEntity),
+      dataSource.getRepository(EventProcessingJobEntity),
+    );
     service = new EventProcessingService(
-      sqliteService,
+      databaseService,
       jobRepository,
       orderRepository,
       validationService,
@@ -70,7 +80,7 @@ describe('EventProcessingService payment and refund guards', () => {
       ),
       decisionService,
       new EventJobCompletionService(
-        sqliteService,
+        databaseService,
         jobRepository,
         orderRepository,
         auditRepository,
@@ -80,8 +90,8 @@ describe('EventProcessingService payment and refund guards', () => {
     );
   });
 
-  afterEach(() => {
-    sqliteService.onModuleDestroy();
+  afterEach(async () => {
+    await dataSource.destroy();
 
     if (previousDbPath === undefined) {
       delete process.env.SQLITE_DB_PATH;
@@ -92,29 +102,29 @@ describe('EventProcessingService payment and refund guards', () => {
     fs.rmSync(directory, { recursive: true, force: true });
   });
 
-  it('rejects repeated payment capture and refunds above captured amount', () => {
-    enqueue({
+  it('rejects repeated payment capture and refunds above captured amount', async () => {
+    await enqueue({
       eventId: 'evt-guards-001',
       orderId: 'ord-guards-001',
       type: SupportedEventType.OrderCreated,
       timestamp: 1710001000,
       payload: { amount: 50, currency: 'PLN' },
     });
-    enqueue({
+    await enqueue({
       eventId: 'evt-guards-002',
       orderId: 'ord-guards-001',
       type: SupportedEventType.PaymentCaptured,
       timestamp: 1710002000,
       payload: { amount: 50 },
     });
-    enqueue({
+    await enqueue({
       eventId: 'evt-guards-003',
       orderId: 'ord-guards-001',
       type: SupportedEventType.PaymentCaptured,
       timestamp: 1710003000,
       payload: { amount: 50 },
     });
-    enqueue({
+    await enqueue({
       eventId: 'evt-guards-004',
       orderId: 'ord-guards-001',
       type: SupportedEventType.RefundIssued,
@@ -122,88 +132,43 @@ describe('EventProcessingService payment and refund guards', () => {
       payload: { refundAmount: 60 },
     });
 
-    while (service.processNextAvailableJob()) {
-      // Process the in-memory queue synchronously for this focused test.
+    while (await service.processNextAvailableJob()) {
+      // Process queued jobs for this focused test.
     }
 
-    expect(readRejectedReasonCounts()).toEqual([
-      expect.objectContaining({
-        reason_code: ReasonCode.PaymentAlreadyCaptured,
-        count: 1,
-      }),
-      expect.objectContaining({
-        reason_code: ReasonCode.RefundExceedsCaptured,
-        count: 1,
-      }),
-    ]);
+    const rejected = await dataSource.getRepository(EventDecisionEntity).find({
+      where: { decision: EngineDecision.Rejected },
+    });
+    const reasonCounts = rejected.reduce<Record<string, number>>(
+      (counts, decision) => {
+        counts[decision.reasonCode] = (counts[decision.reasonCode] ?? 0) + 1;
+        return counts;
+      },
+      {},
+    );
+
+    expect(reasonCounts).toMatchObject({
+      [ReasonCode.PaymentAlreadyCaptured]: 1,
+      [ReasonCode.RefundExceedsCaptured]: 1,
+    });
   });
 
-  function enqueue(eventItem: {
+  async function enqueue(eventItem: {
     eventId: string;
     orderId: string;
     type: SupportedEventType;
     timestamp: number;
     payload: JsonObject;
-  }): void {
-    const now = new Date().toISOString();
-    const db = sqliteService.connection;
-    const rawResult = db
-      .prepare(
-        `
-          INSERT INTO raw_incoming_events (
-            event_id,
-            order_id,
-            type,
-            event_timestamp,
-            raw_event_json,
-            payload_json,
-            received_at
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `,
-      )
-      .run(
-        eventItem.eventId,
-        eventItem.orderId,
-        eventItem.type,
-        eventItem.timestamp,
-        JSON.stringify(eventItem),
-        JSON.stringify(eventItem.payload),
-        now,
-      );
-
-    db.prepare(
-      `
-        INSERT INTO event_processing_jobs (
-          raw_incoming_event_id,
-          status,
-          available_at,
-          attempts,
-          created_at,
-          updated_at
-        )
-        VALUES (?, ?, ?, 0, ?, ?)
-      `,
-    ).run(Number(rawResult.lastInsertRowid), JobStatus.Pending, now, now, now);
-  }
-
-  function readRejectedReasonCounts(): Array<{
-    reason_code: string;
-    count: number;
-  }> {
-    return sqliteService.connection
-      .prepare(
-        `
-          SELECT reason_code, COUNT(*) AS count
-          FROM event_decisions
-          WHERE decision = ?
-          GROUP BY reason_code
-          ORDER BY reason_code
-        `,
-      )
-      .all(EngineDecision.Rejected) as Array<{
-      reason_code: string;
-      count: number;
-    }>;
+  }): Promise<void> {
+    await eventsRepository.enqueueBatch([
+      {
+        eventId: eventItem.eventId,
+        orderId: eventItem.orderId,
+        type: eventItem.type,
+        timestamp: eventItem.timestamp,
+        rawEventJson: JSON.stringify(eventItem),
+        payloadJson: JSON.stringify(eventItem.payload),
+      },
+    ]);
   }
 });

@@ -12,7 +12,7 @@ services:
     ports:
       - '3100:3000'
     volumes:
-      - sqlite-data:/data
+      - database-data:/data
 
   frontend:
     build:
@@ -23,4 +23,4 @@ services:
       - '8080:80'
 
 volumes:
-  sqlite-data:
+  database-data:

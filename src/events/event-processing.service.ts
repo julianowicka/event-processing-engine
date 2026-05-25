@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { SqliteService } from '../database/sqlite.service';
+import { EntityManager } from 'typeorm';
+import { DatabaseService } from '../database/database.service';
 import type { ProcessJobOutcome, ProcessingJobRow } from './event.types';
 import { EventDecisionService } from './processing/event-decision.service';
 import { EventJobCompletionService } from './processing/event-job-completion.service';
@@ -11,7 +12,7 @@ import { OrderEventStateMachineService } from './processing/state-machine/order-
 @Injectable()
 export class EventProcessingService {
   constructor(
-    private readonly sqliteService: SqliteService,
+    private readonly databaseService: DatabaseService,
     private readonly jobRepository: EventJobRepository,
     private readonly orderRepository: OrderRepository,
     private readonly validationService: EventValidationService,
@@ -20,28 +21,33 @@ export class EventProcessingService {
     private readonly completionService: EventJobCompletionService,
   ) {}
 
-  processNextAvailableJob(): ProcessJobOutcome | null {
-    const job = this.jobRepository.claimNextAvailableJob();
+  async processNextAvailableJob(): Promise<ProcessJobOutcome | null> {
+    const job = await this.jobRepository.claimNextAvailableJob();
 
     if (!job) {
       return null;
     }
 
     try {
-      return this.sqliteService.transaction(() => this.processBusinessJob(job));
+      return await this.databaseService.transaction((manager) =>
+        this.processBusinessJob(job, manager),
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.completionService.recordTechnicalFailure(job, message);
+      await this.completionService.recordTechnicalFailure(job, message);
       return { orderChanged: false };
     }
   }
 
-  private processBusinessJob(job: ProcessingJobRow): ProcessJobOutcome {
+  private async processBusinessJob(
+    job: ProcessingJobRow,
+    manager: EntityManager,
+  ): Promise<ProcessJobOutcome> {
     const startedAt = Date.now();
     const validation = this.validationService.validateRawEvent(job);
 
     if (!validation.valid) {
-      this.completionService.completeFinalDecision(
+      await this.completionService.completeFinalDecision(
         job,
         this.validationService.partialEventFromJob(job),
         this.decisionService.invalidEvent(
@@ -50,31 +56,42 @@ export class EventProcessingService {
           validation.details,
         ),
         Date.now() - startedAt,
+        manager,
       );
       return { orderChanged: false };
     }
 
     const event = validation.event;
 
-    if (!this.orderRepository.claimDeduplicationKey(job, event)) {
-      this.completionService.completeFinalDecision(
+    if (
+      !(await this.orderRepository.claimDeduplicationKey(job, event, manager))
+    ) {
+      await this.completionService.completeFinalDecision(
         job,
         event,
         this.decisionService.duplicate(event),
         Date.now() - startedAt,
+        manager,
       );
       return { orderChanged: false };
     }
 
+    const order = await this.orderRepository.findOrder(event.orderId, manager);
+    const applicableFields = await this.orderRepository.findApplicableFields(
+      event.orderId,
+      event,
+      manager,
+    );
+    const hasPendingPayment =
+      await this.jobRepository.hasPendingPaymentForOrder(
+        event.orderId,
+        event.timestamp,
+        manager,
+      );
     const result = this.orderEventStateMachine.apply(event, {
-      order: this.orderRepository.findOrder(event.orderId),
-      canApplyField: (fieldName) =>
-        this.orderRepository.canApplyField(event.orderId, fieldName, event),
-      hasPendingPaymentForOrder: () =>
-        this.jobRepository.hasPendingPaymentForOrder(
-          event.orderId,
-          event.timestamp,
-        ),
+      order,
+      canApplyField: (fieldName) => applicableFields.has(fieldName),
+      hasPendingPaymentForOrder: () => hasPendingPayment,
     });
 
     return this.completionService.completeResult(
@@ -82,6 +99,7 @@ export class EventProcessingService {
       event,
       result,
       Date.now() - startedAt,
+      manager,
     );
   }
 }

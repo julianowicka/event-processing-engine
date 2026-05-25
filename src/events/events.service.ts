@@ -19,7 +19,7 @@ export class EventsService {
 
   constructor(private readonly eventsRepository: EventsRepository) {}
 
-  enqueueBatch(body: JsonValue): QueueEventsResponse {
+  async enqueueBatch(body: JsonValue): Promise<QueueEventsResponse> {
     if (!this.isQueueEventsRequest(body)) {
       throw new BadRequestException('Request body must be a JSON array');
     }
@@ -27,9 +27,9 @@ export class EventsService {
     const projections: EventProjection[] = body.map((eventItem) =>
       this.projectEvent(eventItem),
     );
-    const results: QueuedEventResult[] = this.eventsRepository
-      .enqueueBatch(projections)
-      .map((queuedEvent) => this.toQueuedEventResult(queuedEvent));
+    const results: QueuedEventResult[] = (
+      await this.eventsRepository.enqueueBatch(projections)
+    ).map((queuedEvent) => this.toQueuedEventResult(queuedEvent));
 
     verboseLog(this.logger, 'batch queued', {
       queued: results.length,

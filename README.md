@@ -7,12 +7,12 @@ statistics.
 
 ## Architecture Decisions
 
-- Runtime: Node.js 24+.
+- Runtime: Node.js 24.11+.
 - Framework: NestJS 11.
-- Persistence: local SQLite database file.
+- Persistence: TypeORM 1 with `better-sqlite3` and a local SQLite database file.
 - Default database path: `data/app.sqlite`.
 - Database override: `SQLITE_DB_PATH=/absolute/path/app.sqlite`.
-- No ORM, workflow engine, or event-sourcing framework.
+- Schema: versioned TypeORM migrations; schema synchronization is disabled.
 - `POST /events` is ingestion-only and returns queued results.
 - `raw_incoming_events` is an insert-only raw delivery log.
 - `event_processing_jobs` is the technical queue/status table.
@@ -59,8 +59,8 @@ setup instructions.
 
 ## Local Run
 
-This project uses the built-in Node.js SQLite module, so use Node.js 24 or
-newer.
+This project uses TypeORM 1 and its `better-sqlite3` SQLite driver, so use
+Node.js 24.11 or newer.
 
 ```bash
 yarn install
@@ -72,6 +72,18 @@ By default the API writes to `data/app.sqlite`. Override it with:
 ```bash
 SQLITE_DB_PATH=/absolute/path/app.sqlite yarn start:dev
 ```
+
+Migrations run automatically when the application connects. They can also be
+inspected or run explicitly:
+
+```bash
+yarn migration:show
+yarn migration:run
+yarn migration:revert
+```
+
+The initial TypeORM migration treats any database from the previous raw-SQL
+implementation as disposable and recreates the application tables.
 
 ## Business API
 

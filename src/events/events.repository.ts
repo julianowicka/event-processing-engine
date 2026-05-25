@@ -1,70 +1,75 @@
 import { Injectable } from '@nestjs/common';
-import type { DatabaseSync as DatabaseSyncInstance } from 'node:sqlite';
-import { SqliteService } from '../database/sqlite.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { EntityManager, Repository } from 'typeorm';
+import { DatabaseService } from '../database/database.service';
+import {
+  EventProcessingJobEntity,
+  RawIncomingEventEntity,
+} from '../database/entities';
 import { JobStatus } from './event.types';
 import type { EventProjection, QueuedEventRecord } from './events.types';
 
 @Injectable()
 export class EventsRepository {
-  private readonly db: DatabaseSyncInstance;
+  constructor(
+    private readonly databaseService: DatabaseService,
+    @InjectRepository(RawIncomingEventEntity)
+    private readonly rawEvents: Repository<RawIncomingEventEntity>,
+    @InjectRepository(EventProcessingJobEntity)
+    private readonly jobs: Repository<EventProcessingJobEntity>,
+  ) {}
 
-  constructor(private readonly sqliteService: SqliteService) {
-    this.db = sqliteService.connection;
-  }
-
-  enqueueBatch(projections: readonly EventProjection[]): QueuedEventRecord[] {
-    return this.sqliteService.transaction(() =>
-      projections.map((projection) => this.enqueueSingle(projection)),
+  enqueueBatch(
+    projections: readonly EventProjection[],
+  ): Promise<QueuedEventRecord[]> {
+    return this.databaseService.transaction((manager) =>
+      Promise.all(
+        projections.map((projection) =>
+          this.enqueueSingle(projection, manager),
+        ),
+      ),
     );
   }
 
-  private enqueueSingle(projection: EventProjection): QueuedEventRecord {
+  private async enqueueSingle(
+    projection: EventProjection,
+    manager: EntityManager,
+  ): Promise<QueuedEventRecord> {
     const now = new Date().toISOString();
-    const rawInsertResult = this.db
-      .prepare(
-        `
-          INSERT INTO raw_incoming_events (
-            event_id,
-            order_id,
-            type,
-            event_timestamp,
-            raw_event_json,
-            payload_json,
-            received_at
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `,
-      )
-      .run(
-        projection.eventId,
-        projection.orderId,
-        projection.type,
-        projection.timestamp,
-        projection.rawEventJson,
-        projection.payloadJson,
-        now,
+    const incomingEvent = await manager
+      .getRepository(RawIncomingEventEntity)
+      .save(
+        this.rawEvents.create({
+          eventId: projection.eventId,
+          orderId: projection.orderId,
+          type: projection.type,
+          eventTimestamp: projection.timestamp,
+          rawEventJson: projection.rawEventJson,
+          payloadJson: projection.payloadJson,
+          receivedAt: now,
+        }),
+      );
+    const processingJob = await manager
+      .getRepository(EventProcessingJobEntity)
+      .save(
+        this.jobs.create({
+          rawIncomingEventId: incomingEvent.id,
+          status: JobStatus.Pending,
+          availableAt: now,
+          attempts: 0,
+          lastErrorMessage: null,
+          lastDecisionId: null,
+          lastReasonCode: null,
+          lockedBy: null,
+          lockedAt: null,
+          createdAt: now,
+          updatedAt: now,
+        }),
       );
 
-    const incomingEventId = Number(rawInsertResult.lastInsertRowid);
-    const jobInsertResult = this.db
-      .prepare(
-        `
-          INSERT INTO event_processing_jobs (
-            raw_incoming_event_id,
-            status,
-            available_at,
-            attempts,
-            created_at,
-            updated_at
-          )
-          VALUES (?, ?, ?, 0, ?, ?)
-        `,
-      )
-      .run(incomingEventId, JobStatus.Pending, now, now, now);
-
     return {
-      incomingEventId,
-      processingJobId: Number(jobInsertResult.lastInsertRowid),
+      incomingEventId: incomingEvent.id,
+      processingJobId: processingJob.id,
       projection,
     };
   }

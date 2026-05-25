@@ -5,9 +5,13 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import request from 'supertest';
 import { App } from 'supertest/types';
+import { DataSource } from 'typeorm';
 import { AppModule } from '../../src/app.module';
-import { SqliteService } from '../../src/database/sqlite.service';
-import type { EventDetailsResponse } from '../../src/events/event.types';
+import { EventDecisionEntity, OrderEntity } from '../../src/database/entities';
+import {
+  EngineDecision,
+  type EventDetailsResponse,
+} from '../../src/events/event.types';
 import type { QueueEventsResponse } from '../../src/events/events.types';
 import type { OrderDetailsResponse } from '../../src/orders/orders.types';
 
@@ -130,37 +134,14 @@ describe('Event ingestion API (e2e)', () => {
       rejectedEventsCount: 5,
     });
 
-    const db = app.get(SqliteService).connection;
-
-    expect(
-      db
-        .prepare(
-          `
-            SELECT status, amount_minor, paid_amount_minor, refunded_amount_minor
-            FROM orders
-            WHERE order_id = ?
-          `,
-        )
-        .get('ord-hard-501'),
-    ).toMatchObject({
+    expect(await readOrder('ord-hard-501')).toMatchObject({
       status: 'PAID',
       amount_minor: 24999,
       paid_amount_minor: 19999,
       refunded_amount_minor: 0,
     });
 
-    expect(
-      db
-        .prepare(
-          `
-            SELECT decision, reason_code, COUNT(*) AS count
-            FROM event_decisions
-            GROUP BY decision, reason_code
-            ORDER BY decision, reason_code
-          `,
-        )
-        .all(),
-    ).toEqual(
+    expect(await readDecisionCounts()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           decision: 'ACCEPTED',
@@ -240,36 +221,13 @@ describe('Event ingestion API (e2e)', () => {
       duplicateEventsCount: 0,
     });
 
-    const db = app.get(SqliteService).connection;
-
-    expect(
-      db
-        .prepare(
-          `
-            SELECT status, paid_amount_minor, refunded_amount_minor
-            FROM orders
-            WHERE order_id = ?
-          `,
-        )
-        .get('ord-recover-001'),
-    ).toMatchObject({
+    expect(await readOrder('ord-recover-001')).toMatchObject({
       status: 'PARTIALLY_REFUNDED',
       paid_amount_minor: 12000,
       refunded_amount_minor: 3000,
     });
 
-    expect(
-      db
-        .prepare(
-          `
-            SELECT decision, reason_code, COUNT(*) AS count
-            FROM event_decisions
-            GROUP BY decision, reason_code
-            ORDER BY decision, reason_code
-          `,
-        )
-        .all(),
-    ).toEqual(
+    expect(await readDecisionCounts()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           decision: 'ACCEPTED',
@@ -418,34 +376,14 @@ describe('Event ingestion API (e2e)', () => {
       rejectedEventsCount: 2,
     });
 
-    const db = app.get(SqliteService).connection;
+    expect(
+      await readDecisionCounts(stressOrderId, EngineDecision.Rejected),
+    ).toHaveLength(0);
 
     expect(
-      db
-        .prepare(
-          `
-            SELECT COUNT(*) AS count
-            FROM event_decisions
-            WHERE order_id = ?
-              AND decision = 'REJECTED'
-          `,
-        )
-        .get(stressOrderId),
-    ).toMatchObject({ count: 0 });
-
-    expect(
-      db
-        .prepare(
-          `
-            SELECT reason_code, COUNT(*) AS count
-            FROM event_decisions
-            WHERE order_id = ?
-              AND decision = 'REJECTED'
-            GROUP BY reason_code
-          `,
-        )
-        .get(forbiddenOrderId),
-    ).toMatchObject({
+      await readDecisionCounts(forbiddenOrderId, EngineDecision.Rejected),
+    ).toContainEqual({
+      decision: EngineDecision.Rejected,
       reason_code: 'FORBIDDEN_TRANSITION',
       count: 2,
     });
@@ -758,21 +696,7 @@ describe('Event ingestion API (e2e)', () => {
       duplicateEventsCount: 4,
     });
 
-    const db = app.get(SqliteService).connection;
-
-    expect(
-      db
-        .prepare(
-          `
-            SELECT reason_code, COUNT(*) AS count
-            FROM event_decisions
-            WHERE order_id = ?
-            GROUP BY reason_code
-            ORDER BY reason_code
-          `,
-        )
-        .all(orderId),
-    ).toEqual(
+    expect(await readDecisionCounts(orderId)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           reason_code: 'APPLIED',
@@ -833,37 +757,13 @@ describe('Event ingestion API (e2e)', () => {
       rejectedEventsCount: 0,
     });
 
-    const db = app.get(SqliteService).connection;
-
-    expect(
-      db
-        .prepare(
-          `
-            SELECT status, amount_minor, currency
-            FROM orders
-            WHERE order_id = ?
-          `,
-        )
-        .get(orderId),
-    ).toMatchObject({
+    expect(await readOrder(orderId)).toMatchObject({
       status: 'CREATED',
       amount_minor: 15000,
       currency: 'EUR',
     });
 
-    const partialDecision = db
-      .prepare(
-        `
-          SELECT decision, reason_code, details_json
-          FROM event_decisions
-          WHERE event_id = ?
-        `,
-      )
-      .get('evt-partial-fields-002') as {
-      decision: string;
-      reason_code: string;
-      details_json: string;
-    };
+    const partialDecision = await readDecision('evt-partial-fields-002');
 
     expect(partialDecision).toMatchObject({
       decision: 'PARTIALLY_APPLIED',
@@ -924,38 +824,13 @@ describe('Event ingestion API (e2e)', () => {
       duplicateEventsCount: 0,
     });
 
-    const db = app.get(SqliteService).connection;
-
-    expect(
-      db
-        .prepare(
-          `
-            SELECT status, paid_amount_minor, refunded_amount_minor
-            FROM orders
-            WHERE order_id = ?
-          `,
-        )
-        .get(orderId),
-    ).toMatchObject({
+    expect(await readOrder(orderId)).toMatchObject({
       status: 'PAID',
       paid_amount_minor: 5000,
       refunded_amount_minor: 0,
     });
 
-    expect(
-      db
-        .prepare(
-          `
-            SELECT reason_code, COUNT(*) AS count
-            FROM event_decisions
-            WHERE order_id = ?
-              AND decision = 'REJECTED'
-            GROUP BY reason_code
-            ORDER BY reason_code
-          `,
-        )
-        .all(orderId),
-    ).toEqual([
+    expect(await readDecisionCounts(orderId, EngineDecision.Rejected)).toEqual([
       expect.objectContaining({
         reason_code: 'PAYMENT_ALREADY_CAPTURED',
         count: 1,
@@ -972,6 +847,82 @@ describe('Event ingestion API (e2e)', () => {
     fs.rmSync(directory, { recursive: true, force: true });
     delete process.env.SQLITE_DB_PATH;
   });
+
+  async function readOrder(orderId: string): Promise<{
+    status: string;
+    amount_minor: number | null;
+    paid_amount_minor: number;
+    refunded_amount_minor: number;
+    currency: string | null;
+  }> {
+    const order = await app
+      .get(DataSource)
+      .getRepository(OrderEntity)
+      .findOneByOrFail({ orderId });
+
+    return {
+      status: order.status,
+      amount_minor: order.amountMinor,
+      paid_amount_minor: order.paidAmountMinor,
+      refunded_amount_minor: order.refundedAmountMinor,
+      currency: order.currency,
+    };
+  }
+
+  async function readDecision(eventId: string): Promise<{
+    decision: string;
+    reason_code: string;
+    details_json: string;
+  }> {
+    const decision = await app
+      .get(DataSource)
+      .getRepository(EventDecisionEntity)
+      .findOneByOrFail({ eventId });
+
+    return {
+      decision: decision.decision,
+      reason_code: decision.reasonCode,
+      details_json: decision.detailsJson,
+    };
+  }
+
+  async function readDecisionCounts(
+    orderId?: string,
+    decision?: EngineDecision,
+  ): Promise<
+    Array<{ decision: EngineDecision; reason_code: string; count: number }>
+  > {
+    const rows = await app
+      .get(DataSource)
+      .getRepository(EventDecisionEntity)
+      .find({
+        where: {
+          ...(orderId ? { orderId } : {}),
+          ...(decision ? { decision } : {}),
+        },
+      });
+    const grouped = new Map<
+      string,
+      { decision: EngineDecision; reason_code: string; count: number }
+    >();
+
+    for (const row of rows) {
+      const key = `${row.decision}:${row.reasonCode}`;
+      const entry = grouped.get(key) ?? {
+        decision: row.decision,
+        reason_code: row.reasonCode,
+        count: 0,
+      };
+      entry.count += 1;
+      grouped.set(key, entry);
+    }
+
+    return [...grouped.values()].sort((left, right) =>
+      `${left.decision}:${left.reason_code}`.localeCompare(
+        `${right.decision}:${right.reason_code}`,
+      ),
+    );
+  }
 
   async function waitForStats(
     expected: Partial<Record<string, number>>,

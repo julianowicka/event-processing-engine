@@ -13,12 +13,12 @@ export class EventsController {
   ) {}
 
   @Post()
-  enqueue(@Body() body: JsonValue): QueueEventsResponse {
+  enqueue(@Body() body: JsonValue): Promise<QueueEventsResponse> {
     return this.eventsService.enqueueBatch(body);
   }
 
   @Get(':eventId')
-  getEvent(@Param('eventId') eventId: string): EventDetailsResponse {
+  getEvent(@Param('eventId') eventId: string): Promise<EventDetailsResponse> {
     return this.eventReadService.getEventDetails(eventId);
   }
 }

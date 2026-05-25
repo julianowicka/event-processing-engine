@@ -8,6 +8,7 @@ const workerIntervalMs = Number(process.env.EVENT_WORKER_INTERVAL_MS ?? 1000);
 @Injectable()
 export class EventWorkerService implements OnModuleInit {
   private readonly logger = new Logger(EventWorkerService.name);
+  private isPolling = false;
 
   constructor(
     private readonly eventProcessingService: EventProcessingService,
@@ -18,15 +19,25 @@ export class EventWorkerService implements OnModuleInit {
   }
 
   @Interval(workerIntervalMs)
-  poll(): void {
-    this.runAvailableWork();
+  async poll(): Promise<void> {
+    if (this.isPolling) {
+      return;
+    }
+
+    this.isPolling = true;
+    try {
+      await this.runAvailableWork();
+    } finally {
+      this.isPolling = false;
+    }
   }
 
-  private runAvailableWork(): void {
+  private async runAvailableWork(): Promise<void> {
     let processedJobs = 0;
 
     while (processedJobs < 500) {
-      const outcome = this.eventProcessingService.processNextAvailableJob();
+      const outcome =
+        await this.eventProcessingService.processNextAvailableJob();
 
       if (!outcome) {
         break;

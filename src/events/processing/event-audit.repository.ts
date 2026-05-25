@@ -1,7 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type { DatabaseSync as DatabaseSyncInstance } from 'node:sqlite';
+import { EntityManager } from 'typeorm';
 import type { JsonObject } from '../../common/json.types';
-import { SqliteService } from '../../database/sqlite.service';
+import {
+  DeadLetterEventEntity,
+  EngineStatsEntity,
+  EventDecisionEntity,
+  OrderHistoryEntity,
+} from '../../database/entities';
 import { verboseLog } from '../event-verbose-logger';
 import { EngineDecision, ReasonCode } from '../event.types';
 import type {
@@ -15,55 +20,36 @@ import type { DecisionInput, DecisionResult } from './event-processing.types';
 @Injectable()
 export class EventAuditRepository {
   private readonly logger = new Logger(EventAuditRepository.name);
-  private readonly db: DatabaseSyncInstance;
 
-  constructor(sqliteService: SqliteService) {
-    this.db = sqliteService.connection;
-  }
-
-  writeDecision(input: DecisionInput): DecisionResult {
-    const result = this.db
-      .prepare(
-        `
-          INSERT INTO event_decisions (
-            raw_incoming_event_id,
-            event_processing_job_id,
-            event_id,
-            order_id,
-            type,
-            timestamp,
-            decision,
-            reason_code,
-            reason_message,
-            details_json,
-            processing_time_ms,
-            created_at
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `,
-      )
-      .run(
-        input.job.raw_incoming_event_id,
-        input.job.job_id,
-        input.event.eventId ?? input.job.event_id,
-        input.event.orderId ?? input.job.order_id,
-        input.event.type ?? input.job.type,
-        input.event.timestamp ?? input.job.event_timestamp,
-        input.decision,
-        input.reasonCode,
-        input.reasonMessage,
-        JSON.stringify(input.details ?? {}),
-        input.processingTimeMs,
-        new Date().toISOString(),
-      );
+  async writeDecision(
+    input: DecisionInput,
+    manager: EntityManager,
+  ): Promise<DecisionResult> {
+    const repository = manager.getRepository(EventDecisionEntity);
+    const decision = await repository.save(
+      repository.create({
+        rawIncomingEventId: input.job.raw_incoming_event_id,
+        eventProcessingJobId: input.job.job_id,
+        eventId: input.event.eventId ?? input.job.event_id,
+        orderId: input.event.orderId ?? input.job.order_id,
+        type: input.event.type ?? input.job.type,
+        timestamp: input.event.timestamp ?? input.job.event_timestamp,
+        decision: input.decision,
+        reasonCode: input.reasonCode,
+        reasonMessage: input.reasonMessage,
+        detailsJson: JSON.stringify(input.details ?? {}),
+        processingTimeMs: input.processingTimeMs,
+        createdAt: new Date().toISOString(),
+      }),
+    );
 
     verboseLog(this.logger, 'decision written', {
-      decisionId: Number(result.lastInsertRowid),
+      decisionId: decision.id,
       jobId: input.job.job_id,
       rawIncomingEventId: input.job.raw_incoming_event_id,
-      eventId: input.event.eventId ?? input.job.event_id,
-      orderId: input.event.orderId ?? input.job.order_id,
-      type: input.event.type ?? input.job.type,
+      eventId: decision.eventId,
+      orderId: decision.orderId,
+      type: decision.type,
       decision: input.decision,
       reasonCode: input.reasonCode,
       reasonMessage: input.reasonMessage,
@@ -71,10 +57,16 @@ export class EventAuditRepository {
       details: input.details ?? {},
     });
 
-    return { decisionId: Number(result.lastInsertRowid) };
+    return { decisionId: decision.id };
   }
 
-  updateFinalStats(decision: EngineDecision, processingTimeMs: number): void {
+  async updateFinalStats(
+    decision: EngineDecision,
+    processingTimeMs: number,
+    manager: EntityManager,
+  ): Promise<void> {
+    const repository = manager.getRepository(EngineStatsEntity);
+    const stats = await repository.findOneByOrFail({ id: 1 });
     const acceptedIncrement = decision === EngineDecision.Accepted ? 1 : 0;
     const partialIncrement =
       decision === EngineDecision.PartiallyApplied ? 1 : 0;
@@ -83,36 +75,25 @@ export class EventAuditRepository {
         ? 1
         : 0;
     const duplicateIncrement = decision === EngineDecision.Duplicate ? 1 : 0;
-    const validIncrement = acceptedIncrement + partialIncrement;
 
-    this.db
-      .prepare(
-        `
-          UPDATE stats
-          SET
-            valid_events_count = valid_events_count + ?,
-            accepted_events_count = accepted_events_count + ?,
-            partially_applied_events_count = partially_applied_events_count + ?,
-            rejected_events_count = rejected_events_count + ?,
-            duplicate_events_count = duplicate_events_count + ?,
-            processed_events_count = processed_events_count + 1,
-            total_processing_time_ms = total_processing_time_ms + ?,
-            updated_at = ?
-          WHERE id = 1
-        `,
-      )
-      .run(
-        validIncrement,
-        acceptedIncrement,
-        partialIncrement,
-        rejectedIncrement,
-        duplicateIncrement,
-        processingTimeMs,
-        new Date().toISOString(),
-      );
+    await repository.update(
+      { id: 1 },
+      {
+        validEventsCount:
+          stats.validEventsCount + acceptedIncrement + partialIncrement,
+        acceptedEventsCount: stats.acceptedEventsCount + acceptedIncrement,
+        partiallyAppliedEventsCount:
+          stats.partiallyAppliedEventsCount + partialIncrement,
+        rejectedEventsCount: stats.rejectedEventsCount + rejectedIncrement,
+        duplicateEventsCount: stats.duplicateEventsCount + duplicateIncrement,
+        processedEventsCount: stats.processedEventsCount + 1,
+        totalProcessingTimeMs: stats.totalProcessingTimeMs + processingTimeMs,
+        updatedAt: new Date().toISOString(),
+      },
+    );
   }
 
-  writeHistory(
+  async writeHistory(
     event: ValidOrderEvent,
     fromStatus: OrderStatus | null,
     toStatus: OrderStatus,
@@ -120,81 +101,44 @@ export class EventAuditRepository {
     skippedFields: JsonObject,
     decision: OrderHistoryDecision,
     reasonCode: ReasonCode,
-  ): void {
+    manager: EntityManager,
+  ): Promise<void> {
     const now = new Date().toISOString();
 
-    this.db
-      .prepare(
-        `
-          INSERT INTO order_history (
-            order_id,
-            event_id,
-            event_type,
-            event_timestamp,
-            processed_at,
-            from_status,
-            to_status,
-            changed_fields_json,
-            skipped_fields_json,
-            decision,
-            reason_code,
-            created_at
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `,
-      )
-      .run(
-        event.orderId,
-        event.eventId,
-        event.type,
-        event.timestamp,
-        now,
-        fromStatus,
-        toStatus,
-        JSON.stringify(changedFields),
-        JSON.stringify(skippedFields),
-        decision,
-        reasonCode,
-        now,
-      );
+    await manager.getRepository(OrderHistoryEntity).insert({
+      orderId: event.orderId,
+      eventId: event.eventId,
+      eventType: event.type,
+      eventTimestamp: event.timestamp,
+      processedAt: now,
+      fromStatus,
+      toStatus,
+      changedFieldsJson: JSON.stringify(changedFields),
+      skippedFieldsJson: JSON.stringify(skippedFields),
+      decision,
+      reasonCode,
+      createdAt: now,
+    });
   }
 
-  insertDeadLetterEvent(
+  async insertDeadLetterEvent(
     job: ProcessingJobRow,
     errorMessage: string,
     attempts: number,
-  ): void {
-    this.db
-      .prepare(
-        `
-          INSERT INTO dead_letter_events (
-            event_processing_job_id,
-            raw_incoming_event_id,
-            event_id,
-            order_id,
-            type,
-            timestamp,
-            raw_event_json,
-            reason_code,
-            error_message,
-            attempts,
-            created_at
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `,
-      )
-      .run(
-        job.job_id,
-        job.raw_incoming_event_id,
-        job.event_id,
-        job.order_id,
-        job.type,
-        job.event_timestamp,
-        job.raw_event_json,
-        ReasonCode.ProcessingError,
-        errorMessage,
-        attempts,
-        new Date().toISOString(),
-      );
+    manager: EntityManager,
+  ): Promise<void> {
+    await manager.getRepository(DeadLetterEventEntity).insert({
+      eventProcessingJobId: job.job_id,
+      rawIncomingEventId: job.raw_incoming_event_id,
+      eventId: job.event_id,
+      orderId: job.order_id,
+      type: job.type,
+      timestamp: job.event_timestamp,
+      rawEventJson: job.raw_event_json,
+      reasonCode: ReasonCode.ProcessingError,
+      errorMessage,
+      attempts,
+      createdAt: new Date().toISOString(),
+    });
   }
 }
