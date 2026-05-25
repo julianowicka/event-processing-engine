@@ -1,0 +1,56 @@
+name: event-processing-engine
+
+services:
+  api:
+    image: ghcr.io/julianowicka/event-processing-engine-api:${IMAGE_TAG:-latest}
+    container_name: event-processing-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      SQLITE_DB_PATH: /data/app.sqlite
+    volumes:
+      - event_processing_data:/data
+    expose:
+      - "3000"
+    networks:
+      - internal
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/health').then((response) => { if (!response.ok) process.exit(1); }).catch(() => process.exit(1));",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  frontend:
+    image: ghcr.io/julianowicka/event-processing-engine-frontend:${IMAGE_TAG:-latest}
+    container_name: event-processing-frontend
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    expose:
+      - "80"
+    networks:
+      internal:
+      web:
+        aliases:
+          - event-processing-frontend
+
+volumes:
+  event_processing_data:
+    name: event_processing_data
+
+networks:
+  internal:
+    name: event_processing_internal
+  web:
+    external: true
