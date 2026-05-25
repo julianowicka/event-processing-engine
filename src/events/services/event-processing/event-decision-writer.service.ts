@@ -2,7 +2,6 @@ import { Injectable } from '@nestjs/common';
 import { EntityManager } from 'typeorm';
 import type { JsonObject } from '../../../common/json.types';
 import {
-  DeadLetterEventEntity,
   EngineStatsEntity,
   EventDecisionEntity,
   RawIncomingEventEntity,
@@ -76,14 +75,6 @@ export class EventDecisionWriterService {
   ): Promise<void> {
     const createdAt = new Date().toISOString();
 
-    await manager.getRepository(DeadLetterEventEntity).save(
-      manager.getRepository(DeadLetterEventEntity).create({
-        rawIncomingEventId: delivery.id,
-        errorMessage,
-        createdAt,
-      }),
-    );
-
     await manager.getRepository(EventDecisionEntity).save(
       manager.getRepository(EventDecisionEntity).create({
         rawIncomingEventId: delivery.id,
@@ -102,7 +93,7 @@ export class EventDecisionWriterService {
     await manager.getRepository(RawIncomingEventEntity).update(
       { id: delivery.id },
       {
-        processingStatus: ProcessingStatus.DeadLettered,
+        processingStatus: ProcessingStatus.Done,
         availableAt: createdAt,
         lastErrorMessage: errorMessage,
       },

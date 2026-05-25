@@ -115,8 +115,8 @@ Rejected events include `REJECTED`, `DUPLICATE`, and `FAILED` decisions with
 their reason codes and messages. The full audit log may be returned as a useful
 addition to the minimum assignment response.
 
-Pending delivery state, retry information, and DLQ details are intentionally not
-part of this business endpoint.
+Pending delivery state and retry information are intentionally not part of this
+business endpoint.
 
 ## `GET /stats`
 
@@ -154,4 +154,4 @@ Returns the required precomputed statistics:
   from the same event may still be partially applied and the skipped status is
   recorded in the audit decision.
 - An event that requires a missing order stays retryable for up to three
-  attempts, scheduled one hour apart, before final rejection.
+  attempts, scheduled 5 seconds apart, before final rejection.

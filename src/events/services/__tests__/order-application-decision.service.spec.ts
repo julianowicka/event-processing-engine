@@ -10,11 +10,24 @@ import type { OrderEventHandlingContext } from '../event-processing/handlers/ord
 import { OrderApplicationDecisionService } from '../event-processing/order-application-decision.service';
 
 describe('OrderApplicationDecisionService', () => {
-  afterEach(() => {
-    jest.useRealTimers();
+  let previousRetryDelayMs: string | undefined;
+
+  beforeEach(() => {
+    previousRetryDelayMs = process.env.EVENT_RETRY_DELAY_MS;
+    delete process.env.EVENT_RETRY_DELAY_MS;
   });
 
-  it('retries a transient rejection one hour later before the limit', async () => {
+  afterEach(() => {
+    jest.useRealTimers();
+
+    if (previousRetryDelayMs === undefined) {
+      delete process.env.EVENT_RETRY_DELAY_MS;
+    } else {
+      process.env.EVENT_RETRY_DELAY_MS = previousRetryDelayMs;
+    }
+  });
+
+  it('retries a transient rejection five seconds later before the limit', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-05-25T10:00:00.000Z'));
     const writer = new EventDecisionWriterService();
     const markRetryableFailure = jest
@@ -36,9 +49,33 @@ describe('OrderApplicationDecisionService', () => {
       context.manager,
       context.delivery,
       'Event requires an existing order',
-      '2026-05-25T11:00:00.000Z',
+      '2026-05-25T10:00:05.000Z',
     );
     expect(writeFinalDecision).not.toHaveBeenCalled();
+  });
+
+  it('uses the configured retry delay', async () => {
+    process.env.EVENT_RETRY_DELAY_MS = '35000';
+    jest.useFakeTimers().setSystemTime(new Date('2026-05-25T10:00:00.000Z'));
+    const writer = new EventDecisionWriterService();
+    const markRetryableFailure = jest
+      .spyOn(writer, 'markRetryableFailure')
+      .mockResolvedValue();
+    const service = new OrderApplicationDecisionService(writer);
+    const context = createContext(0);
+
+    await service.retryOrReject(
+      context,
+      ReasonCode.OrderNotReady,
+      'Event requires an existing order',
+    );
+
+    expect(markRetryableFailure).toHaveBeenCalledWith(
+      context.manager,
+      context.delivery,
+      'Event requires an existing order',
+      '2026-05-25T10:00:35.000Z',
+    );
   });
 
   it('rejects a transient failure on its third processing attempt', async () => {

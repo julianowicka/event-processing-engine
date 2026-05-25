@@ -12,13 +12,14 @@ statistics.
 - Persistence: TypeORM 1 with `better-sqlite3` and a local SQLite database file.
 - Default database path: `data/app.sqlite`.
 - Database override: `SQLITE_DB_PATH=/absolute/path/app.sqlite`.
-- Schema: one initial TypeORM migration; schema synchronization is disabled.
+- Retry delay override: `EVENT_RETRY_DELAY_MS=5000` (applies to all retries).
+- Schema: TypeORM migrations; schema synchronization is disabled.
 - `POST /events` is ingestion-only and returns queued results.
 - `raw_incoming_events` stores raw deliveries and their technical queue status.
 - The processing scheduler processes pending and retryable events.
 - Deduplication is enforced through `processed_event_keys.event_id`.
-- Raw deliveries, order state, history, audit decisions, stats, and DLQ records
-  are stored in SQLite tables.
+- Raw deliveries, order state, history, audit decisions, and stats are stored in
+  SQLite tables.
 
 Detailed design documents live in [docs](./docs/README.md).
 
@@ -47,6 +48,13 @@ Verbose worker tracing can be enabled for debugging:
 
 ```bash
 EVENT_WORKER_VERBOSE_LOGS=true docker compose up --build
+```
+
+All retries default to 5 seconds. Override the shared delay in milliseconds
+with `EVENT_RETRY_DELAY_MS`, for example:
+
+```bash
+EVENT_RETRY_DELAY_MS=5000 docker compose up --build
 ```
 
 Then inspect the processing flow with:
@@ -81,8 +89,8 @@ By default the API writes to `data/app.sqlite`. Override it with:
 SQLITE_DB_PATH=/absolute/path/app.sqlite yarn start:dev
 ```
 
-The single initial migration runs automatically when the application connects
-to a new database. It can also be inspected or run explicitly:
+Pending migrations run automatically when the application connects to a
+database. They can also be inspected or run explicitly:
 
 ```bash
 yarn migration:show
@@ -90,11 +98,11 @@ yarn migration:run
 yarn migration:revert
 ```
 
-This version deliberately does not migrate earlier database layouts. When
-upgrading a local checkout created before the single-migration schema, stop the
-containers, delete `data/app.sqlite`, `data/app.sqlite-wal`, and
-`data/app.sqlite-shm` if present, then start the application again. This reset
-permanently removes local event and order history.
+The dead-letter queue removal migrates automatically. For databases created
+before the current core schema, stop the containers, delete `data/app.sqlite`,
+`data/app.sqlite-wal`, and `data/app.sqlite-shm` if present, then start the
+application again. This reset permanently removes local event and order
+history.
 
 ## Business API
 
@@ -103,7 +111,7 @@ permanently removes local event and order history.
   decisions, and matching history rows.
 - `GET /api/orders/:id`: returns current order state, history, rejected events,
   pending jobs, and audit log.
-- `GET /api/stats`: returns valid, rejected, duplicate, timing, pending, and DLQ
+- `GET /api/stats`: returns valid, rejected, duplicate, timing, and pending
   counters.
 - `GET /api/health`: returns service status and configured database path.
 

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { EntityManager } from 'typeorm';
+import { getEventRetryDelayMs } from '../../../env';
 import {
   EventDecisionEntity,
   OrderEntity,
@@ -18,7 +19,6 @@ import { EventValidationService } from './event-validation.service';
 import { OrderEventHandlerFactory } from './handlers/order-event-handler.factory';
 
 const MAX_PROCESSING_ATTEMPTS = 3;
-const RETRY_DELAY_MS = 1_000;
 
 @Injectable()
 export class EventProcessingService {
@@ -168,7 +168,7 @@ export class EventProcessingService {
         manager,
         latest,
         errorMessage,
-        new Date(Date.now() + RETRY_DELAY_MS).toISOString(),
+        new Date(Date.now() + getEventRetryDelayMs()).toISOString(),
       );
     });
   }

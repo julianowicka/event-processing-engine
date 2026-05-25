@@ -26,7 +26,7 @@ An update, payment, cancellation, or refund arrives for an unknown order.
 Decision: no final decision until the retry limit is reached.
 
 Action: keep the delivery as `RETRY` with `ORDER_NOT_READY` in its last error
-message and retry one hour later. Write final `REJECTED` after attempt `3` if
+message and retry 5 seconds later. Write final `REJECTED` after attempt `3` if
 the order still does not exist.
 
 ## Create After Earlier Rejected Event

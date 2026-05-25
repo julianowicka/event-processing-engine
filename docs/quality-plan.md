@@ -16,11 +16,11 @@ business rules.
 - `OrderCreatedEventHandler`, `OrderUpdatedEventHandler`,
   `PaymentCapturedEventHandler`, `OrderCancelledEventHandler`, and
   `RefundIssuedEventHandler`: focused domain evaluation strategies.
-- `EventDeliveryCompletionService`: applies evaluated outcomes and owns final,
-  retry, and dead-letter completion effects.
+- `EventDeliveryCompletionService`: applies evaluated outcomes and owns final
+  and retry completion effects.
 - `EventDeliveryRepository`: stored-delivery status and retry lifecycle.
 - `OrderRepository` and `EventAuditRepository`: SQL persistence helpers for
-  order state, deduplication, history, decisions, stats, and DLQ records.
+  order state, deduplication, history, decisions, and stats.
 - `EventValidationService`, `OrderStatusTransitionRulesService`,
   `OrderUpdatedEventFieldsService`, and `EventDecisionService`: SQL-free
   processing rules and decision helpers shared by event handlers.
@@ -49,7 +49,7 @@ Initial observability scope:
 - Raw deliveries stored in the SQLite database.
 - Processing lifecycle stored on `raw_incoming_events`.
 - Engine decisions stored in `event_decisions`.
-- Dead-lettered technical failures stored in `dead_letter_events`.
+- Exhausted technical failures stored as final `FAILED` decisions.
 - Accepted changes queried from applied `event_decisions`.
 - Stable reason codes.
 - Processing time tracked per final decision and in aggregate stats.

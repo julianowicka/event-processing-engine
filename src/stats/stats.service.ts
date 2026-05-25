@@ -2,7 +2,6 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import {
-  DeadLetterEventEntity,
   EngineStatsEntity,
   RawIncomingEventEntity,
 } from '../database/entities';
@@ -16,8 +15,6 @@ export class StatsService {
     private readonly stats: Repository<EngineStatsEntity>,
     @InjectRepository(RawIncomingEventEntity)
     private readonly rawEvents: Repository<RawIncomingEventEntity>,
-    @InjectRepository(DeadLetterEventEntity)
-    private readonly deadLetters: Repository<DeadLetterEventEntity>,
   ) {}
 
   async getStats(): Promise<EngineStats> {
@@ -27,17 +24,15 @@ export class StatsService {
       throw new Error('Stats row was not initialized');
     }
 
-    const [rawDeliveriesCount, pendingEventsCount, deadLetterEventsCount] =
-      await Promise.all([
-        this.rawEvents.count(),
-        this.rawEvents.countBy({
-          processingStatus: In([
-            ProcessingStatus.Pending,
-            ProcessingStatus.Retry,
-          ]),
-        }),
-        this.deadLetters.count(),
-      ]);
+    const [rawDeliveriesCount, pendingEventsCount] = await Promise.all([
+      this.rawEvents.count(),
+      this.rawEvents.countBy({
+        processingStatus: In([
+          ProcessingStatus.Pending,
+          ProcessingStatus.Retry,
+        ]),
+      }),
+    ]);
 
     return {
       validEventsCount: row.validEventsCount,
@@ -50,7 +45,6 @@ export class StatsService {
           : row.totalProcessingTimeMs / row.processedEventsCount,
       pendingEventsCount,
       rawDeliveriesCount,
-      deadLetterEventsCount,
       updatedAt: row.updatedAt,
     };
   }

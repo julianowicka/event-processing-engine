@@ -8,6 +8,7 @@ import {
 } from '../../events/types/event.types';
 import { DatabaseService } from '../database.service';
 import { EngineStatsEntity, RawIncomingEventEntity } from '../entities';
+import { RemoveDeadLetterQueue1760000000001 } from '../migrations/1760000000001-remove-dead-letter-queue';
 import { createTypeOrmOptions } from '../typeorm.config';
 
 describe('DatabaseService', () => {
@@ -46,7 +47,6 @@ describe('DatabaseService', () => {
       )
     ).map(({ name }) => name);
     expect(tables).toEqual([
-      'dead_letter_events',
       'event_decisions',
       'order_field_versions',
       'orders',
@@ -129,5 +129,25 @@ describe('DatabaseService', () => {
         eventId: 'evt-rollback',
       }),
     ).resolves.toBe(0);
+  });
+
+  it('drops an existing dead letter table during the removal migration', async () => {
+    await dataSource.query(
+      `CREATE TABLE dead_letter_events (
+        raw_incoming_event_id INTEGER PRIMARY KEY,
+        error_message TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      )`,
+    );
+    const queryRunner = dataSource.createQueryRunner();
+
+    await new RemoveDeadLetterQueue1760000000001().up(queryRunner);
+    await queryRunner.release();
+
+    await expect(
+      dataSource.query<Array<{ name: string }>>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'dead_letter_events'",
+      ),
+    ).resolves.toEqual([]);
   });
 });

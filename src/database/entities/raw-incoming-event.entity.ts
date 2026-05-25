@@ -4,7 +4,7 @@ import { ProcessingStatus } from '../../events/types/event.types';
 @Entity('raw_incoming_events')
 @Check(
   'chk_raw_processing_status',
-  "processing_status IN ('PENDING', 'RETRY', 'DONE', 'DEAD_LETTERED')",
+  "processing_status IN ('PENDING', 'RETRY', 'DONE')",
 )
 @Check('chk_raw_attempts', 'attempts >= 0')
 @Index('idx_raw_processing_queue', ['processingStatus', 'availableAt', 'id'])

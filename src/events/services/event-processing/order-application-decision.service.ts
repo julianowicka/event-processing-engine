@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { JsonObject } from '../../../common/json.types';
+import { getEventRetryDelayMs } from '../../../env';
 import {
   EngineDecision,
   OrderStatus,
@@ -9,7 +10,6 @@ import { EventDecisionWriterService } from './event-decision-writer.service';
 import type { OrderEventHandlingContext } from './handlers/order-event-handler';
 
 const MAX_RETRYABLE_ATTEMPTS = 3;
-const RETRYABLE_DECISION_DELAY_MS = 60 * 60 * 1_000;
 
 @Injectable()
 export class OrderApplicationDecisionService {
@@ -80,7 +80,7 @@ export class OrderApplicationDecisionService {
       context.manager,
       context.delivery,
       reasonMessage,
-      new Date(Date.now() + RETRYABLE_DECISION_DELAY_MS).toISOString(),
+      new Date(Date.now() + getEventRetryDelayMs()).toISOString(),
     );
   }
 

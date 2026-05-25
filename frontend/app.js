@@ -19,6 +19,7 @@ const emptyEventHistory = document.querySelector('#emptyEventHistory');
 const eventDecisionsTable = document.querySelector('#eventDecisionsTable');
 const emptyEventDecisions = document.querySelector('#emptyEventDecisions');
 const eventInspectorOutput = document.querySelector('#eventInspectorOutput');
+const eventInspectorPanel = eventSummary.closest('.inspector-panel');
 const orderLookupInput = document.querySelector('#orderLookupInput');
 const inspectOrderButton = document.querySelector('#inspectOrderButton');
 const inspectFirstOrderButton = document.querySelector(
@@ -34,6 +35,7 @@ const emptyOrderPending = document.querySelector('#emptyOrderPending');
 const orderAuditTable = document.querySelector('#orderAuditTable');
 const emptyOrderAudit = document.querySelector('#emptyOrderAudit');
 const orderInspectorOutput = document.querySelector('#orderInspectorOutput');
+const orderInspectorPanel = orderSummary.closest('.inspector-panel');
 
 let activeScenario = null;
 let payloadEditedManually = false;
@@ -541,12 +543,14 @@ function renderResults(results) {
       result.eventId,
       eventLookupInput,
       inspectEvent,
+      eventInspectorPanel,
     );
     renderInspectorLink(
       cells[3],
       result.orderId,
       orderLookupInput,
       inspectOrder,
+      orderInspectorPanel,
     );
     cells[4].textContent = result.type || '-';
 
@@ -554,7 +558,7 @@ function renderResults(results) {
   }
 }
 
-function renderInspectorLink(cell, id, lookupInput, inspect) {
+function renderInspectorLink(cell, id, lookupInput, inspect, scrollTarget) {
   if (!id) {
     cell.textContent = '-';
     return;
@@ -567,6 +571,7 @@ function renderInspectorLink(cell, id, lookupInput, inspect) {
   button.addEventListener('click', () => {
     lookupInput.value = id;
     void inspect(id);
+    scrollTarget?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
   cell.append(button);
 }
@@ -754,7 +759,6 @@ function renderOrderInspector(details) {
       'Refunded minor',
       state ? displayValue(state.refundedAmountMinor) : '-',
     ),
-    summaryItem('Version', state ? String(state.version) : '-'),
     summaryItem('Audit rows', String(details.auditLog.length)),
   );
 

@@ -30,7 +30,6 @@ export enum ProcessingStatus {
   Pending = 'PENDING',
   Retry = 'RETRY',
   Done = 'DONE',
-  DeadLettered = 'DEAD_LETTERED',
 }
 
 export enum EngineDecision {

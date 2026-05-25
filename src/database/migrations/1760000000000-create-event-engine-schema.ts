@@ -16,7 +16,7 @@ export class CreateEventEngineSchema1760000000000 implements MigrationInterface 
         raw_event_json TEXT NOT NULL,
         received_at TEXT NOT NULL,
         processing_status TEXT NOT NULL DEFAULT 'PENDING' CHECK (
-          processing_status IN ('PENDING', 'RETRY', 'DONE', 'DEAD_LETTERED')
+          processing_status IN ('PENDING', 'RETRY', 'DONE')
         ),
         available_at TEXT NOT NULL,
         attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
@@ -73,12 +73,6 @@ export class CreateEventEngineSchema1760000000000 implements MigrationInterface 
         processed_events_count INTEGER NOT NULL DEFAULT 0,
         total_processing_time_ms INTEGER NOT NULL DEFAULT 0,
         updated_at TEXT NOT NULL
-      )`,
-      `CREATE TABLE IF NOT EXISTS dead_letter_events (
-        raw_incoming_event_id INTEGER PRIMARY KEY,
-        error_message TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        FOREIGN KEY (raw_incoming_event_id) REFERENCES raw_incoming_events(id)
       )`,
       `CREATE INDEX IF NOT EXISTS idx_raw_processing_queue
         ON raw_incoming_events (processing_status, available_at, id)`,

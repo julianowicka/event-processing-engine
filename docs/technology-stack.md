@@ -20,7 +20,7 @@ architecture.
 - Local SQLite database file stored on disk.
 - Default path: `data/app.sqlite`.
 - Optional override: `SQLITE_DB_PATH`.
-- TypeORM with one initial migration and schema synchronization disabled.
+- TypeORM migrations with schema synchronization disabled.
 - No workflow engine.
 - No event-sourcing framework.
 
@@ -32,10 +32,11 @@ architecture.
 - In-process `EventWorkerService` for background processing.
 - Worker interval defaults to `100` ms and can be changed with
   `EVENT_PROCESSING_SCHEDULER_INTERVAL_MS`.
-- Events requiring a missing order retry after one hour and are rejected with
+- Events requiring a missing order retry after 5 seconds and are rejected with
   `ORDER_NOT_READY` after three unsuccessful attempts.
-- Technical failures retry up to `3` attempts, then move the delivery to
-  `dead_letter_events`.
+- Technical failures retry after 5 seconds, up to `3` attempts, then produce
+  a final `FAILED` decision.
+- `EVENT_RETRY_DELAY_MS` overrides the shared retry delay for both cases.
 
 ## Validation
 
@@ -47,8 +48,8 @@ architecture.
 
 - Jest unit tests for processing behavior.
 - Target tests cover worker-style processing, missing-order rejection,
-  deduplication, partial merge, domain-owned status transitions, and DLQ
-  handling.
+  deduplication, partial merge, domain-owned status transitions, and technical
+  failure handling.
 
 ## Optional Future Work
 

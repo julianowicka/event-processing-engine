@@ -13,7 +13,7 @@ Tests focus on the business rules that matter for the recruitment task.
 - Forbidden transition such as `CANCELLED -> PAID`.
 - `ORDER_UPDATED` can partially apply amount or currency while rejecting a
   supplied lifecycle status.
-- Technical worker failure moves the delivery to DLQ after retry limit.
+- Technical worker failure creates a final `FAILED` decision after retry limit.
 
 ## Additional Useful Scenarios
 

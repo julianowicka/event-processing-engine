@@ -9,7 +9,7 @@ The target keeps the valuable parts of the existing design:
 - audit decisions are explicit;
 - statistics are stored for fast reads;
 - stale partial updates can be merged per field;
-- exhausted technical failures are visible in a minimal dead-letter queue.
+- exhausted technical failures are visible as final failed decisions.
 
 It removes tables and columns that are not needed to demonstrate those
 requirements.
@@ -28,7 +28,7 @@ Override:
 
 The persistence layer:
 
-- creates a new database from one initial TypeORM migration at startup;
+- creates or upgrades a database through TypeORM migrations at startup;
 - append deliveries during `POST /events`;
 - process pending deliveries later in a worker;
 - wrap one processing outcome, including state, audit, and stats updates, in a
@@ -36,7 +36,7 @@ The persistence layer:
 
 ## Target Schema
 
-The target schema has seven tables:
+The target schema has six tables:
 
 | Table | Responsibility |
 | --- | --- |
@@ -46,7 +46,6 @@ The target schema has seven tables:
 | `order_field_versions` | Field-level timestamp metadata for stale-event merging |
 | `event_decisions` | Explicit audit log and history source |
 | `stats` | Precomputed counters for fast `GET /stats` |
-| `dead_letter_events` | Minimal record of exhausted technical failures |
 
 The raw event content remains immutable after insertion. Only its technical
 processing fields are updated by the worker. This is sufficient for a small
@@ -67,7 +66,7 @@ Fields:
   for querying and audit presentation.
 - `raw_event_json`: original input item; never modified after insertion.
 - `received_at`: insertion timestamp.
-- `processing_status`: `PENDING`, `RETRY`, `DONE`, or `DEAD_LETTERED`.
+- `processing_status`: `PENDING`, `RETRY`, or `DONE`.
 - `available_at`: when a pending or retryable item may be processed.
 - `attempts`: number of unexpected technical failures.
 - `last_error_message`: most recent unexpected technical error.
@@ -77,8 +76,8 @@ Fields removed from the current model:
 - `payload_json`: the worker can parse the payload from `raw_event_json`.
 - work-item ids, lock ownership, and latest-decision pointers: unnecessary for the
   single-worker recruitment-task scope.
-- additional lifecycle timestamps: `received_at`, decision
-  timestamps, and DLQ timestamps already cover the observable lifecycle.
+- additional lifecycle timestamps: `received_at` and decision timestamps
+  already cover the observable lifecycle.
 
 The worker changes only `processing_status`, `available_at`, `attempts`, and
 `last_error_message`.
@@ -209,29 +208,9 @@ Fields removed:
 The response calculates average time as
 `total_processing_time_ms / processed_events_count`.
 
-### `dead_letter_events`
-
-Stores only exhausted unexpected worker failures. Business rejections are not
-dead-lettered.
-
-Fields:
-
-- `raw_incoming_event_id`: primary key and reference to the failed delivery.
-- `error_message`.
-- `created_at`.
-
-Fields removed:
-
-- copied event metadata and raw JSON: available in `raw_incoming_events`.
-- attempts: available in `raw_incoming_events.attempts`.
-- reason code: every DLQ record represents `PROCESSING_ERROR`.
-
-When the retry limit is reached, one transaction:
-
-- sets the raw delivery to `DEAD_LETTERED`;
-- inserts a minimal DLQ row;
-- writes a final `FAILED` audit decision;
-- increments rejected and processed statistics.
+When the technical retry limit is reached, one transaction marks the delivery
+`DONE`, writes a final `FAILED` audit decision with reason
+`PROCESSING_ERROR`, and increments rejected and processed statistics.
 
 ## Target SQL Skeleton
 
@@ -248,7 +227,7 @@ CREATE TABLE IF NOT EXISTS raw_incoming_events (
   raw_event_json TEXT NOT NULL,
   received_at TEXT NOT NULL,
   processing_status TEXT NOT NULL DEFAULT 'PENDING' CHECK (
-    processing_status IN ('PENDING', 'RETRY', 'DONE', 'DEAD_LETTERED')
+    processing_status IN ('PENDING', 'RETRY', 'DONE')
   ),
   available_at TEXT NOT NULL,
   attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
@@ -324,13 +303,6 @@ CREATE TABLE IF NOT EXISTS stats (
   updated_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS dead_letter_events (
-  raw_incoming_event_id INTEGER PRIMARY KEY,
-  error_message TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  FOREIGN KEY (raw_incoming_event_id) REFERENCES raw_incoming_events(id)
-);
-
 CREATE INDEX IF NOT EXISTS idx_raw_processing_queue
   ON raw_incoming_events (processing_status, available_at, id);
 
@@ -354,6 +326,6 @@ locking would require additional lifecycle columns or another durable claiming
 mechanism.
 
 An event that requires an order before an `ORDER_CREATED` event has been applied
-is retried one hour later and rejected after three unsuccessful processing
+is retried 5 seconds later and rejected after three unsuccessful processing
 attempts. Out-of-order partial updates for an existing order still use
 field-level merge rules through `order_field_versions`.

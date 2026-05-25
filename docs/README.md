@@ -29,10 +29,9 @@ The primary design documents are:
   amount and currency; payment, cancellation, and refund events own lifecycle
   status transitions.
 - Statistics: one `stats` row keeps required counters fast to read.
-- Dead letters: exhausted technical failures create a minimal
-  `dead_letter_events` record.
+- Technical failures: exhausted retries produce a final `FAILED` decision.
 - Scope reduction: no multi-worker locking is required; missing-order events
-  use a bounded hourly retry before final rejection.
+  use a bounded 5-second retry before final rejection.
 
 ## Target Flow
 
@@ -45,7 +44,6 @@ flowchart LR
     E --> F["State machine and field merge"]
     F --> G["orders and order_field_versions"]
     F --> H["event_decisions and stats"]
-    D --> I["Minimal dead_letter_events"]
     G --> J["GET /orders/:id"]
     H --> J
     H --> K["GET /stats"]

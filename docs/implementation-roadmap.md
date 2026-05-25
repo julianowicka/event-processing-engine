@@ -9,8 +9,8 @@ fragment preferred over an overbuilt design.
 - Immutable raw event snapshots with processing lifecycle metadata on
   `raw_incoming_events`.
 - Materialized order state.
-- History from applied audit decisions, deduplication keys, field versions,
-  stats, and DLQ.
+- History from applied audit decisions, deduplication keys, field versions, and
+  stats.
 - Event-shape validation during worker processing.
 - Deduplication by `eventId`.
 - Explicit order status state machine.
@@ -20,7 +20,7 @@ fragment preferred over an overbuilt design.
 - Missing-order events rejected; stale fields for existing orders merged.
 - `POST /events`: ingest and return stored delivery ids.
 - Background worker: process available `PENDING` and `RETRY` deliveries.
-- Retry metadata and `dead_letter_events` for technical worker failures.
+- Retry metadata and final failed decisions for technical worker failures.
 - `GET /orders/:id`: current state, history, rejected events, and audit log.
 - `GET /stats`: required counters and processing time.
 - `GET /health`: operational health endpoint.

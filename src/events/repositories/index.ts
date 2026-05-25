@@ -1,4 +1,3 @@
-export { DeadLetterEventRepository } from './dead-letter-event.repository';
 export { EngineStatsRepository } from './engine-stats.repository';
 export { EventDecisionRepository } from './event-decision.repository';
 export { OrderFieldVersionRepository } from './order-field-version.repository';
@@ -6,7 +5,6 @@ export { OrderRepository } from './order.repository';
 export { ProcessedEventKeyRepository } from './processed-event-key.repository';
 export { RawIncomingEventRepository } from './raw-incoming-event.repository';
 
-import { DeadLetterEventRepository } from './dead-letter-event.repository';
 import { EngineStatsRepository } from './engine-stats.repository';
 import { EventDecisionRepository } from './event-decision.repository';
 import { OrderFieldVersionRepository } from './order-field-version.repository';
@@ -21,5 +19,4 @@ export const eventRepositories = [
   OrderFieldVersionRepository,
   EventDecisionRepository,
   EngineStatsRepository,
-  DeadLetterEventRepository,
 ];

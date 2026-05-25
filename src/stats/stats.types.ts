@@ -15,6 +15,5 @@ export interface EngineStats {
   averageProcessingTimeMs: number;
   pendingEventsCount: number;
   rawDeliveriesCount: number;
-  deadLetterEventsCount: number;
   updatedAt: string;
 }

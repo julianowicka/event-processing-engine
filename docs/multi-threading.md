@@ -27,7 +27,7 @@ To scale beyond one local process:
 2. Consider WAL tuning, retryable busy handling, or a broker-backed store.
 3. Preserve deduplication through `processed_event_keys`.
 4. Keep processing order deterministic per partition/order key.
-5. Keep the retry and DLQ policy.
+5. Keep the retry policy and final failure auditing.
 
 ## Idempotency
 

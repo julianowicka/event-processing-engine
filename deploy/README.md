@@ -40,6 +40,7 @@ CORS_ORIGIN=https://event-processing-engine.julianowicka.dev
 EVENT_WORKER_INTERVAL_MS=1000
 EVENT_WORKER_LOCK_TIMEOUT_MS=30000
 EVENT_WORKER_VERBOSE_LOGS=false
+EVENT_RETRY_DELAY_MS=5000
 ```
 
 After adding `deploy` to the Docker group, its next SSH login will receive the

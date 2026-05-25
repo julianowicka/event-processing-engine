@@ -31,7 +31,7 @@ individual raw delivery:
 ## Missing Order
 
 If an otherwise valid event references an order that does not exist yet, it is
-kept in `RETRY` and made available one hour later. After three unsuccessful
+kept in `RETRY` and made available 5 seconds later. After three unsuccessful
 attempts, the final decision is `REJECTED` with reason `ORDER_NOT_READY`.
 
 ## Failure Safety
@@ -41,22 +41,22 @@ service commits only after a mutation completes successfully.
 
 - If ingestion fails, no raw deliveries from that request are saved.
 - If processing fails unexpectedly, the worker records the technical failure,
-  schedules a retry, or moves the delivery to the DLQ after the retry limit.
+  schedules a retry, or writes a final `FAILED` decision after the retry limit.
 - Worker failures update only processing lifecycle fields on
   `raw_incoming_events`; its `raw_event_json` snapshot is immutable.
 
 Business decisions are final except for `ORDER_NOT_READY`, which is explicitly
 retryable because order creation may still arrive.
 
-## Retry And Dead Letter Policy
+## Retry Policy
 
 Target worker behavior:
 
-- Retry `ORDER_NOT_READY` one hour later and reject it on attempt `3`.
-- Retry technical failures up to `3` attempts.
+- Retry `ORDER_NOT_READY` 5 seconds later and reject it on attempt `3`.
+- Retry technical failures 5 seconds later, up to `3` attempts.
 - Keep failed-but-retryable deliveries `RETRY` until their next `available_at`.
-- After attempt `3`, move the delivery to a dead-letter queue with an error
-  message; its raw event snapshot and attempt count remain available from
+- After attempt `3`, finish the delivery with a `FAILED` decision and its error
+  message; its raw event snapshot remains available from
   `raw_incoming_events`.
 - Manual replay should require deliberate inspection.
 

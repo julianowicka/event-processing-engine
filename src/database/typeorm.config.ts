@@ -3,6 +3,7 @@ import { dirname, resolve } from 'node:path';
 import type { TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { databaseEntities } from './entities';
 import { CreateEventEngineSchema1760000000000 } from './migrations/1760000000000-create-event-engine-schema';
+import { RemoveDeadLetterQueue1760000000001 } from './migrations/1760000000001-remove-dead-letter-queue';
 
 export function getDatabasePath(): string {
   const configuredPath = process.env.SQLITE_DB_PATH ?? 'data/app.sqlite';
@@ -27,7 +28,10 @@ export function createTypeOrmOptions(): TypeOrmModuleOptions {
     timeout: 5000,
     enableWAL: enableWal,
     entities: databaseEntities,
-    migrations: [CreateEventEngineSchema1760000000000],
+    migrations: [
+      CreateEventEngineSchema1760000000000,
+      RemoveDeadLetterQueue1760000000001,
+    ],
     migrationsRun: true,
     synchronize: false,
     logging: false,

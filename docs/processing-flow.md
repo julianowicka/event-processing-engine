@@ -58,16 +58,15 @@ An event that cannot be evaluated because its order does not yet exist is
 rejected with an explicit reason. The simplified target does not retry business
 ordering cases such as payment arriving before order creation.
 
-## Technical Retries And DLQ
+## Technical Retries
 
 Only unexpected technical failures are retried.
 
 1. Increment `raw_incoming_events.attempts`.
-2. If attempts remain, set `processing_status = RETRY`, set a short
-   `available_at`, and save `last_error_message`.
-3. If the retry limit is reached, set status to `DEAD_LETTERED`, insert one
-   minimal `dead_letter_events` row, write a final `FAILED` audit decision, and
-   update stats.
+2. If attempts remain, set `processing_status = RETRY`, set `available_at` for
+   5 seconds later, and save `last_error_message`.
+3. If the retry limit is reached, set status to `DONE`, write a final `FAILED`
+   audit decision, and update stats.
 
 Retry attempts are not audit decisions because the engine has not made a final
 business decision yet.
@@ -75,6 +74,6 @@ business decision yet.
 ## Intentional Scope
 
 The simplified target supports one worker process. It does not include worker
-lock ownership, pending-delivery API output, business deferral, or copied raw
-event data in the dead-letter table. These features are outside the
-recruitment-task requirements and can be added later if needed.
+lock ownership, pending-delivery API output, or business deferral. These
+features are outside the recruitment-task requirements and can be added later
+if needed.
