@@ -4,22 +4,18 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Event Engine Test Console</title>
-    <link rel="stylesheet" href="./styles.css?v=minimal-header-1" />
+    <link rel="stylesheet" href="./styles.css?v=endpoint-links-1" />
   </head>
   <body>
-    <nav class="site-nav" aria-label="Primary navigation">
-      <div class="site-nav-inner">
-        <div class="site-nav-row">
-          <a
-            href="https://julianowicka.dev/"
-            class="brand-link"
-            target="_blank"
-            rel="noreferrer"
-          >
-            JULIA NOWICKA
-          </a>
-        </div>
-      </div>
+    <nav class="site-nav" aria-label="Julia Nowicka homepage">
+      <a
+        href="https://julianowicka.dev/"
+        class="site-nav-link"
+        target="_blank"
+        rel="noreferrer"
+      >
+        <span class="brand-link">JULIA NOWICKA</span>
+      </a>
     </nav>
 
     <main class="shell">
@@ -75,16 +71,43 @@
             </svg>
           </span>
           <span>
-            <strong>Backend stats API</strong>
-            <span>event-processing-engine.julianowicka.dev/api/stats</span>
+            <strong>GET STATS endpoint</strong>
+            <span>https://event-processing-engine.julianowicka.dev/api/stats</span>
+          </span>
+        </a>
+        <a
+          class="quick-link events-link"
+          href="https://event-processing-engine.julianowicka.dev/api/events"
+          target="_blank"
+          rel="noreferrer"
+        >
+          <span class="quick-link-icon" aria-hidden="true">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M12 5v14"></path>
+              <path d="M5 12h14"></path>
+            </svg>
+          </span>
+          <span>
+            <strong>POST EVENTS endpoint</strong>
+            <span>https://event-processing-engine.julianowicka.dev/api/events</span>
           </span>
         </a>
       </section>
 
       <header class="topbar" id="console">
         <div>
-          <p class="eyebrow">Event Processing Engine</p>
-          <h1>Test Console</h1>
+          <h1>Event Processing Engine</h1>
+          <p class="console-label">Test Console</p>
         </div>
         <button class="ghost-button" id="refreshButton" type="button">
           Refresh Stats
@@ -478,6 +501,6 @@
       </section>
     </main>
 
-    <script src="./app.js?v=minimal-header-1"></script>
+    <script src="./app.js?v=endpoint-links-1"></script>
   </body>
 </html>

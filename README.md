@@ -5,6 +5,8 @@ engine stores raw deliveries, processes them in the background, maintains the
 current order state, records history and audit decisions, and exposes processing
 statistics.
 
+Live page: [https://event-processing-engine.julianowicka.dev/](https://event-processing-engine.julianowicka.dev/)
+
 ## Architecture Decisions
 
 - Runtime: Node.js 24.11+.
