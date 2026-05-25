@@ -12,7 +12,11 @@ import {
   OrderEntity,
   RawIncomingEventEntity,
 } from '../../src/database/entities';
-import { EngineDecision } from '../../src/events/types/event.types';
+import {
+  EngineDecision,
+  ProcessingStatus,
+  type EventDetailsResponse,
+} from '../../src/events/types/event.types';
 import type { QueueEventsResponse } from '../../src/events/types/events.types';
 import type { OrderDetailsResponse } from '../../src/orders/orders.types';
 
@@ -234,15 +238,13 @@ describe('Event ingestion API (e2e)', () => {
       ]),
     );
 
-    expect(await readDecisionCounts()).toEqual(
-      [
-        expect.objectContaining({
-          decision: 'ACCEPTED',
-          reason_code: 'APPLIED',
-          count: 1,
-        }),
-      ],
-    );
+    expect(await readDecisionCounts()).toEqual([
+      expect.objectContaining({
+        decision: 'ACCEPTED',
+        reason_code: 'APPLIED',
+        count: 1,
+      }),
+    ]);
   });
 
   it('keeps valid stress and forbidden transition scenarios isolated', async () => {
@@ -486,6 +488,70 @@ describe('Event ingestion API (e2e)', () => {
         ]);
         expect(body.auditLog).toHaveLength(4);
       });
+  });
+
+  it('returns test-only event inspector details for an event id', async () => {
+    const eventId = 'evt-inspector-001';
+    const orderId = 'ord-inspector-001';
+    const event = {
+      eventId,
+      orderId,
+      type: 'ORDER_CREATED',
+      timestamp: 1710001000,
+      payload: { amount: 80, currency: 'PLN' },
+    };
+
+    await request(app.getHttpServer())
+      .post('/api/events')
+      .send([event, event])
+      .expect(201);
+
+    await waitForStats({ processedEventsCount: 2 });
+
+    await request(app.getHttpServer())
+      .get(`/api/events/${eventId}`)
+      .expect(200)
+      .expect((response) => {
+        const body = response.body as EventDetailsResponse;
+
+        expect(body).toMatchObject({
+          eventId,
+          orderIds: [orderId],
+        });
+        expect(body.deliveries).toHaveLength(2);
+        expect(body.deliveries[0]).toMatchObject({
+          eventId,
+          orderId,
+          rawEvent: event,
+          payload: event.payload,
+          processing: { status: ProcessingStatus.Done },
+        });
+        expect(body.decisions).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              eventId,
+              decision: EngineDecision.Accepted,
+            }),
+            expect.objectContaining({
+              eventId,
+              decision: EngineDecision.Duplicate,
+            }),
+          ]),
+        );
+        expect(body.history).toEqual([
+          expect.objectContaining({
+            eventId,
+            orderId,
+            decision: EngineDecision.Accepted,
+          }),
+        ]);
+      });
+  });
+
+  it('returns 404 for an unknown event inspector id', async () => {
+    await request(app.getHttpServer())
+      .get('/api/events/evt-does-not-exist')
+      .expect(404);
   });
 
   it('keeps an event retryable while its required order does not exist', async () => {
@@ -858,7 +924,9 @@ describe('Event ingestion API (e2e)', () => {
       if (
         response.status === 200 &&
         ((body.auditLog?.length ?? 0) > 0 ||
-          (body.pendingJobs ?? []).some((job) => job.status === 'RETRY'))
+          (body.pendingJobs ?? []).some(
+            (job) => job.status === ProcessingStatus.Retry,
+          ))
       ) {
         return body as OrderDetailsResponse;
       }

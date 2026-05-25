@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { DiscoveryModule } from '@nestjs/core';
 import { DatabaseModule } from '../../database/database.module';
 import { EventEnqueuerService } from './event-enqueuer.service';
+import { EventInspectorService } from './event-inspector.service';
 import { EventDecisionWriterService } from './event-processing/event-decision-writer.service';
 import { EventMoneyService } from './event-processing/event-money.service';
 import { EventProcessingService } from './event-processing/event-processing.service';
@@ -30,6 +31,7 @@ import { OrderUpdateApplicationService } from './event-processing/order-update-a
   controllers: [EventsController],
   providers: [
     EventEnqueuerService,
+    EventInspectorService,
     EventDecisionWriterService,
     EventMoneyService,
     EventProcessingService,

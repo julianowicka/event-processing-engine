@@ -1,5 +1,14 @@
-import { BadRequestException, Body, Controller, Post } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+} from '@nestjs/common';
 import { EventEnqueuerService } from './services/event-enqueuer.service';
+import { EventInspectorService } from './services/event-inspector.service';
+import type { EventDetailsResponse } from './types/event.types';
 import type {
   QueueEventsRequest,
   QueueEventsResponse,
@@ -7,7 +16,10 @@ import type {
 
 @Controller('events')
 export class EventsController {
-  constructor(private readonly eventEnqueuerService: EventEnqueuerService) {}
+  constructor(
+    private readonly eventEnqueuerService: EventEnqueuerService,
+    private readonly eventInspectorService: EventInspectorService,
+  ) {}
 
   @Post()
   create(@Body() events: QueueEventsRequest): Promise<QueueEventsResponse> {
@@ -16,5 +28,11 @@ export class EventsController {
     }
 
     return this.eventEnqueuerService.enqueueBatch(events);
+  }
+
+  // Test-only diagnostic endpoint used by the bundled frontend.
+  @Get(':eventId')
+  getById(@Param('eventId') eventId: string): Promise<EventDetailsResponse> {
+    return this.eventInspectorService.getEventDetails(eventId);
   }
 }
