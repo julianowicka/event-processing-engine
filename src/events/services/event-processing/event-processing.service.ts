@@ -2,7 +2,6 @@ import { Injectable } from '@nestjs/common';
 import { RawIncomingEventEntity } from 'src/database/entities';
 import { OrderRepository } from 'src/events/repositories';
 import { OrderStatus, SupportedEventType } from 'src/events/types/event.types';
-import { NonExistentOrderEventHandler } from './handlers/non-existent-order-event.handler';
 import { OrderEventHandlerFactory } from './handlers/order-event-handler.factory';
 
 @Injectable()
@@ -10,7 +9,6 @@ export class EventProcessingService {
   constructor(
     private readonly orderRepository: OrderRepository,
     private readonly orderEventHandlerFactory: OrderEventHandlerFactory,
-    private readonly nonExistentOrderEventHandler: NonExistentOrderEventHandler,
   ) {}
 
   async processEvent(event: RawIncomingEventEntity): Promise<void> {
@@ -20,25 +18,25 @@ export class EventProcessingService {
     }
 
     const order = await this.orderRepository.findById(event.orderId);
+    const orderStatus = order?.status ?? OrderStatus.DoesNotExist
 
-    const orderEventHandler =
-      this.orderEventHandlerFactory.createOrderEventHandler(order?.status ?? OrderStatus.DoesNotExist);
+    const orderEventHandler = this.orderEventHandlerFactory.createOrderEventHandler(orderStatus);
 
     switch (event.type) {
       case SupportedEventType.OrderCreated:
-        orderEventHandler.handleOrderCreatedEvent(event);
+        orderEventHandler.handleOrderCreatedEvent(order, event);
         return;
       case SupportedEventType.OrderUpdated:
-        orderEventHandler.handleOrderUpdatedEvent(event);
+        orderEventHandler.handleOrderUpdatedEvent(order, event);
         return;
       case SupportedEventType.PaymentCaptured:
-        orderEventHandler.handlePaymentCapturedEvent(event);
+        orderEventHandler.handlePaymentCapturedEvent(order, event);
         return;
       case SupportedEventType.OrderCancelled:
-        orderEventHandler.handleOrderCancelledEvent(event);
+        orderEventHandler.handleOrderCancelledEvent(order, event);
         return;
       case SupportedEventType.RefundIssued:
-        orderEventHandler.handleRefundIssuedEvent(event);
+        orderEventHandler.handleRefundIssuedEvent(order, event);
         return;
       default:
         // TODO: REJECT EVENT

@@ -1,9 +1,24 @@
-import { RawIncomingEventEntity } from 'src/database/entities';
+import { OrderEntity, RawIncomingEventEntity } from 'src/database/entities';
 
 export interface OrderEventHandler {
-  handleOrderCreatedEvent(event: RawIncomingEventEntity): void;
-  handleOrderUpdatedEvent(event: RawIncomingEventEntity): void;
-  handlePaymentCapturedEvent(event: RawIncomingEventEntity): void;
-  handleOrderCancelledEvent(event: RawIncomingEventEntity): void;
-  handleRefundIssuedEvent(event: RawIncomingEventEntity): void;
+  handleOrderCreatedEvent(
+    order: OrderEntity | null,
+    event: RawIncomingEventEntity,
+  ): void;
+  handleOrderUpdatedEvent(
+    order: OrderEntity | null,
+    event: RawIncomingEventEntity,
+  ): void;
+  handlePaymentCapturedEvent(
+    order: OrderEntity | null,
+    event: RawIncomingEventEntity,
+  ): void;
+  handleOrderCancelledEvent(
+    order: OrderEntity | null,
+    event: RawIncomingEventEntity,
+  ): void;
+  handleRefundIssuedEvent(
+    order: OrderEntity | null,
+    event: RawIncomingEventEntity,
+  ): void;
 }
