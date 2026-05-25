@@ -47,6 +47,16 @@ Then inspect the processing flow with:
 docker compose logs -f api
 ```
 
+## Production Deployment
+
+Production is deployed to an OVH VPS through GitHub Actions and GitHub
+Container Registry. The deployment runs the API and frontend as separate
+containers behind the existing Caddy reverse proxy, with SQLite retained in a
+dedicated Docker volume.
+
+See [deploy/README.md](./deploy/README.md) for VPS, DNS, GHCR, and deployment
+setup instructions.
+
 ## Local Run
 
 This project uses the built-in Node.js SQLite module, so use Node.js 24 or
