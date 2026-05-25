@@ -4,11 +4,84 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Event Engine Test Console</title>
-    <link rel="stylesheet" href="./styles.css?v=order-inspector-3" />
+    <link rel="stylesheet" href="./styles.css?v=minimal-header-1" />
   </head>
   <body>
+    <nav class="site-nav" aria-label="Primary navigation">
+      <div class="site-nav-inner">
+        <div class="site-nav-row">
+          <a
+            href="https://julianowicka.dev/"
+            class="brand-link"
+            target="_blank"
+            rel="noreferrer"
+          >
+            JULIA NOWICKA
+          </a>
+        </div>
+      </div>
+    </nav>
+
     <main class="shell">
-      <header class="topbar">
+      <section class="quick-links" aria-label="Project links">
+        <a
+          class="quick-link github-link"
+          href="https://github.com/julianowicka/event-processing-engine"
+          target="_blank"
+          rel="noreferrer"
+        >
+          <span class="quick-link-icon" aria-hidden="true">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+            >
+              <path
+                d="M12 2C6.48 2 2 6.58 2 12.26c0 4.53 2.87 8.37 6.84 9.73.5.1.68-.22.68-.49 0-.24-.01-1.04-.01-1.89-2.78.62-3.37-1.22-3.37-1.22-.45-1.19-1.11-1.5-1.11-1.5-.91-.64.07-.63.07-.63 1 .07 1.53 1.06 1.53 1.06.9 1.57 2.35 1.12 2.92.85.09-.67.35-1.12.63-1.38-2.22-.26-4.56-1.14-4.56-5.08 0-1.12.39-2.04 1.03-2.76-.1-.26-.45-1.31.1-2.72 0 0 .84-.28 2.75 1.05A9.3 9.3 0 0 1 12 6.94c.85 0 1.7.12 2.5.34 1.91-1.33 2.75-1.05 2.75-1.05.55 1.41.2 2.46.1 2.72.64.72 1.03 1.64 1.03 2.76 0 3.95-2.34 4.82-4.57 5.08.36.32.68.95.68 1.92 0 1.38-.01 2.49-.01 2.83 0 .27.18.59.69.49A10.1 10.1 0 0 0 22 12.26C22 6.58 17.52 2 12 2Z"
+              ></path>
+            </svg>
+          </span>
+          <span>
+            <strong>GitHub repository</strong>
+            <span>julianowicka/event-processing-engine</span>
+          </span>
+        </a>
+        <a
+          class="quick-link backend-link"
+          href="https://event-processing-engine.julianowicka.dev/api/stats"
+          target="_blank"
+          rel="noreferrer"
+        >
+          <span class="quick-link-icon" aria-hidden="true">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M4 6h16"></path>
+              <path d="M4 12h16"></path>
+              <path d="M4 18h16"></path>
+              <circle cx="8" cy="6" r="1"></circle>
+              <circle cx="8" cy="12" r="1"></circle>
+              <circle cx="8" cy="18" r="1"></circle>
+            </svg>
+          </span>
+          <span>
+            <strong>Backend stats API</strong>
+            <span>event-processing-engine.julianowicka.dev/api/stats</span>
+          </span>
+        </a>
+      </section>
+
+      <header class="topbar" id="console">
         <div>
           <p class="eyebrow">Event Processing Engine</p>
           <h1>Test Console</h1>
@@ -18,7 +91,7 @@
         </button>
       </header>
 
-      <section class="metrics" aria-label="Processing statistics">
+      <section class="metrics" id="stats" aria-label="Processing statistics">
         <div>
           <span class="metric-value" id="validEventsCount">0</span>
           <span class="metric-label">Valid events</span>
@@ -37,7 +110,7 @@
         </div>
       </section>
 
-      <section class="workspace">
+      <section class="workspace" id="workspace">
         <aside class="scenario-panel">
           <div class="panel-heading">
             <h2>Scenarios</h2>
@@ -176,7 +249,7 @@
           <pre id="responseOutput">{}</pre>
         </section>
 
-        <section class="inspector-panel">
+        <section class="inspector-panel" id="inspectors">
           <div class="panel-heading split">
             <h2>Event Inspector</h2>
             <div class="lookup-actions">
@@ -405,6 +478,6 @@
       </section>
     </main>
 
-    <script src="./app.js?v=post-response-1"></script>
+    <script src="./app.js?v=minimal-header-1"></script>
   </body>
 </html>

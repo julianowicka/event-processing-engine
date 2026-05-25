@@ -3,6 +3,7 @@ const message = document.querySelector('#message');
 const sendButton = document.querySelector('#sendButton');
 const formatButton = document.querySelector('#formatButton');
 const refreshButton = document.querySelector('#refreshButton');
+const siteNav = document.querySelector('.site-nav');
 const resultsTable = document.querySelector('#resultsTable');
 const emptyResults = document.querySelector('#emptyResults');
 const responseOutput = document.querySelector('#responseOutput');
@@ -339,6 +340,10 @@ function setBusy(isBusy) {
   inspectFirstButton.disabled = isBusy;
   inspectOrderButton.disabled = isBusy;
   inspectFirstOrderButton.disabled = isBusy;
+}
+
+function updateNavState() {
+  siteNav.classList.toggle('scrolled', window.scrollY > 8);
 }
 
 function setScenario(name) {
@@ -890,7 +895,9 @@ inspectFirstOrderButton.addEventListener(
 );
 formatButton.addEventListener('click', formatPayload);
 refreshButton.addEventListener('click', () => void loadStats());
+window.addEventListener('scroll', updateNavState, { passive: true });
 
+updateNavState();
 setScenario('stress');
 renderEventInspector(null);
 renderOrderInspector(null);
