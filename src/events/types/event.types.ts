@@ -1,4 +1,4 @@
-import type { JsonObject, JsonValue } from '../common/json.types';
+import type { JsonObject, JsonValue } from '../../common/json.types';
 
 export type {
   EventProjection,
@@ -25,9 +25,9 @@ export enum OrderStatus {
   Refunded = 'REFUNDED',
 }
 
-export enum JobStatus {
+export enum ProcessingStatus {
   Pending = 'PENDING',
-  Deferred = 'DEFERRED',
+  Retry = 'RETRY',
   Done = 'DONE',
   DeadLettered = 'DEAD_LETTERED',
 }
@@ -37,7 +37,6 @@ export enum EngineDecision {
   PartiallyApplied = 'PARTIALLY_APPLIED',
   Rejected = 'REJECTED',
   Duplicate = 'DUPLICATE',
-  Deferred = 'DEFERRED',
   Failed = 'FAILED',
 }
 
@@ -74,13 +73,12 @@ export type OrderHistoryDecision =
   | EngineDecision.Accepted
   | EngineDecision.PartiallyApplied;
 
-export interface ProcessingJobRow {
-  job_id: number;
+export interface ProcessingDeliveryRow {
   raw_incoming_event_id: number;
-  status: JobStatus;
+  processing_status: ProcessingStatus;
+  available_at: string;
   attempts: number;
-  locked_by: string | null;
-  locked_at: string | null;
+  last_error_message: string | null;
   raw_event_json: string;
   event_id: string | null;
   order_id: string | null;
@@ -103,9 +101,6 @@ export interface OrderRow {
   currency: string | null;
   paid_amount_minor: number;
   refunded_amount_minor: number;
-  version: number;
-  max_accepted_event_timestamp: number;
-  last_accepted_event_id: string;
   created_at: string;
   updated_at: string;
 }
@@ -117,7 +112,6 @@ export interface ProcessJobOutcome {
 export interface EventDecisionDetails {
   id: number;
   rawIncomingEventId: number;
-  processingJobId: number;
   eventId: string | null;
   orderId: string | null;
   type: string | null;
@@ -125,7 +119,10 @@ export interface EventDecisionDetails {
   decision: EngineDecision;
   reasonCode: ReasonCode;
   reasonMessage: string;
-  details: JsonObject;
+  fromStatus: OrderStatus | null;
+  toStatus: OrderStatus | null;
+  changedFields: JsonObject;
+  skippedFields: JsonObject;
   processingTimeMs: number;
   createdAt: string;
 }
@@ -139,16 +136,12 @@ export interface EventDeliveryDetails {
   receivedAt: string;
   payload: JsonObject | null;
   rawEvent: JsonValue;
-  processingJob: {
-    id: number;
-    status: JobStatus;
+  processing: {
+    status: ProcessingStatus;
     availableAt: string;
     attempts: number;
-    lastReasonCode: string | null;
-    createdAt: string;
-    updatedAt: string;
-    latestDecision: EventDecisionDetails | null;
-  } | null;
+    lastErrorMessage: string | null;
+  };
 }
 
 export interface EventHistoryDetails {

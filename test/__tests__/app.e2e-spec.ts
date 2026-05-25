@@ -7,12 +7,16 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../../src/app.module';
-import { EventDecisionEntity, OrderEntity } from '../../src/database/entities';
+import {
+  EventDecisionEntity,
+  OrderEntity,
+  RawIncomingEventEntity,
+} from '../../src/database/entities';
 import {
   EngineDecision,
   type EventDetailsResponse,
-} from '../../src/events/event.types';
-import type { QueueEventsResponse } from '../../src/events/events.types';
+} from '../../src/events/types/event.types';
+import type { QueueEventsResponse } from '../../src/events/types/events.types';
 import type { OrderDetailsResponse } from '../../src/orders/orders.types';
 
 describe('Event ingestion API (e2e)', () => {
@@ -493,7 +497,7 @@ describe('Event ingestion API (e2e)', () => {
       });
   });
 
-  it('returns audit and pending job data when the order does not exist yet', async () => {
+  it('rejects an event when its required order does not exist yet', async () => {
     const orderId = 'ord-read-deferred-001';
 
     await request(app.getHttpServer())
@@ -515,29 +519,24 @@ describe('Event ingestion API (e2e)', () => {
       orderId,
       currentState: null,
       history: [],
-      rejectedEvents: [],
+      rejectedEvents: [
+        expect.objectContaining({
+          eventId: 'evt-read-deferred-001',
+          decision: 'REJECTED',
+          reasonCode: 'ORDER_NOT_READY',
+        }),
+      ],
     });
     expect(order.auditLog).toEqual([
       expect.objectContaining({
         eventId: 'evt-read-deferred-001',
         orderId,
         type: 'PAYMENT_CAPTURED',
-        decision: 'DEFERRED',
+        decision: 'REJECTED',
         reasonCode: 'ORDER_NOT_READY',
       }),
     ]);
-    expect(order.pendingJobs).toHaveLength(1);
-    expect(order.pendingJobs[0]).toMatchObject({
-      status: 'DEFERRED',
-      eventId: 'evt-read-deferred-001',
-      orderId,
-      type: 'PAYMENT_CAPTURED',
-      lastReasonCode: 'ORDER_NOT_READY',
-    });
-    expect(order.pendingJobs[0].latestDecision).toMatchObject({
-      decision: 'DEFERRED',
-      reasonCode: 'ORDER_NOT_READY',
-    });
+    expect(order.pendingJobs).toEqual([]);
   });
 
   it('returns 404 for a completely unknown order', async () => {
@@ -769,9 +768,11 @@ describe('Event ingestion API (e2e)', () => {
       decision: 'PARTIALLY_APPLIED',
       reason_code: 'PARTIAL_MERGE',
     });
-    expect(JSON.parse(partialDecision.details_json)).toMatchObject({
-      changedFields: { currency: 'EUR' },
-      skippedFields: { amountMinor: 'OBSOLETE_FIELD' },
+    expect(JSON.parse(partialDecision.changed_fields_json)).toEqual({
+      currency: 'EUR',
+    });
+    expect(JSON.parse(partialDecision.skipped_fields_json)).toEqual({
+      amountMinor: 'OBSOLETE_FIELD',
     });
   });
 
@@ -872,17 +873,23 @@ describe('Event ingestion API (e2e)', () => {
   async function readDecision(eventId: string): Promise<{
     decision: string;
     reason_code: string;
-    details_json: string;
+    changed_fields_json: string;
+    skipped_fields_json: string;
   }> {
+    const raw = await app
+      .get(DataSource)
+      .getRepository(RawIncomingEventEntity)
+      .findOneByOrFail({ eventId });
     const decision = await app
       .get(DataSource)
       .getRepository(EventDecisionEntity)
-      .findOneByOrFail({ eventId });
+      .findOneByOrFail({ rawIncomingEventId: raw.id });
 
     return {
       decision: decision.decision,
       reason_code: decision.reasonCode,
-      details_json: decision.detailsJson,
+      changed_fields_json: decision.changedFieldsJson,
+      skipped_fields_json: decision.skippedFieldsJson,
     };
   }
 
@@ -892,15 +899,22 @@ describe('Event ingestion API (e2e)', () => {
   ): Promise<
     Array<{ decision: EngineDecision; reason_code: string; count: number }>
   > {
-    const rows = await app
+    const query = app
       .get(DataSource)
       .getRepository(EventDecisionEntity)
-      .find({
-        where: {
-          ...(orderId ? { orderId } : {}),
-          ...(decision ? { decision } : {}),
-        },
-      });
+      .createQueryBuilder('decisionRow')
+      .innerJoin(
+        RawIncomingEventEntity,
+        'raw',
+        'raw.id = decisionRow.rawIncomingEventId',
+      );
+    if (orderId) {
+      query.andWhere('raw.orderId = :orderId', { orderId });
+    }
+    if (decision) {
+      query.andWhere('decisionRow.decision = :decision', { decision });
+    }
+    const rows = await query.getMany();
     const grouped = new Map<
       string,
       { decision: EngineDecision; reason_code: string; count: number }

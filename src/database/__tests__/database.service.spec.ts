@@ -2,13 +2,12 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { DataSource, type DataSourceOptions } from 'typeorm';
-import { SupportedEventType } from '../../events/event.types';
-import { DatabaseService } from '../database.service';
 import {
-  EngineStatsEntity,
-  EventProcessingJobEntity,
-  RawIncomingEventEntity,
-} from '../entities';
+  ProcessingStatus,
+  SupportedEventType,
+} from '../../events/types/event.types';
+import { DatabaseService } from '../database.service';
+import { EngineStatsEntity, RawIncomingEventEntity } from '../entities';
 import { createTypeOrmOptions } from '../typeorm.config';
 
 describe('DatabaseService', () => {
@@ -38,10 +37,64 @@ describe('DatabaseService', () => {
     fs.rmSync(directory, { recursive: true, force: true });
   });
 
-  it('runs migrations and seeds the singleton stats entity', async () => {
+  it('creates exactly the documented schema and seeds singleton stats', async () => {
     expect(await dataSource.showMigrations()).toBe(false);
     expect(dataSource.hasMetadata(RawIncomingEventEntity)).toBe(true);
-    expect(dataSource.hasMetadata(EventProcessingJobEntity)).toBe(true);
+    const tables = (
+      (await dataSource.query(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name != 'migrations' ORDER BY name",
+      )) as Array<{ name: string }>
+    ).map(({ name }) => name);
+    expect(tables).toEqual([
+      'dead_letter_events',
+      'event_decisions',
+      'order_field_versions',
+      'orders',
+      'processed_event_keys',
+      'raw_incoming_events',
+      'stats',
+    ]);
+    const columnNames = async (table: string): Promise<string[]> =>
+      (
+        (await dataSource.query(`PRAGMA table_info(${table})`)) as Array<{
+          name: string;
+        }>
+      ).map(({ name }) => name);
+    await expect(columnNames('raw_incoming_events')).resolves.toEqual([
+      'id',
+      'event_id',
+      'order_id',
+      'type',
+      'event_timestamp',
+      'raw_event_json',
+      'received_at',
+      'processing_status',
+      'available_at',
+      'attempts',
+      'last_error_message',
+    ]);
+    await expect(columnNames('event_decisions')).resolves.toEqual([
+      'id',
+      'raw_incoming_event_id',
+      'decision',
+      'reason_code',
+      'reason_message',
+      'from_status',
+      'to_status',
+      'changed_fields_json',
+      'skipped_fields_json',
+      'processing_time_ms',
+      'created_at',
+    ]);
+    await expect(columnNames('stats')).resolves.toEqual([
+      'id',
+      'valid_events_count',
+      'rejected_events_count',
+      'duplicate_events_count',
+      'processed_events_count',
+      'total_processing_time_ms',
+      'updated_at',
+    ]);
     await expect(
       dataSource.getRepository(EngineStatsEntity).findOneByOrFail({ id: 1 }),
     ).resolves.toMatchObject({
@@ -60,8 +113,11 @@ describe('DatabaseService', () => {
           type: SupportedEventType.OrderCreated,
           eventTimestamp: 1710000000,
           rawEventJson: '{}',
-          payloadJson: '{}',
           receivedAt: new Date().toISOString(),
+          processingStatus: ProcessingStatus.Pending,
+          availableAt: new Date().toISOString(),
+          attempts: 0,
+          lastErrorMessage: null,
         });
 
         throw new Error('fail the unit of work');

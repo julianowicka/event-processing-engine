@@ -4,10 +4,9 @@ import { In, Repository } from 'typeorm';
 import {
   DeadLetterEventEntity,
   EngineStatsEntity,
-  EventProcessingJobEntity,
   RawIncomingEventEntity,
 } from '../database/entities';
-import { JobStatus } from '../events/event.types';
+import { ProcessingStatus } from '../events/types/event.types';
 import type { EngineStats } from './stats.types';
 
 @Injectable()
@@ -17,8 +16,6 @@ export class StatsService {
     private readonly stats: Repository<EngineStatsEntity>,
     @InjectRepository(RawIncomingEventEntity)
     private readonly rawEvents: Repository<RawIncomingEventEntity>,
-    @InjectRepository(EventProcessingJobEntity)
-    private readonly jobs: Repository<EventProcessingJobEntity>,
     @InjectRepository(DeadLetterEventEntity)
     private readonly deadLetters: Repository<DeadLetterEventEntity>,
   ) {}
@@ -30,24 +27,20 @@ export class StatsService {
       throw new Error('Stats row was not initialized');
     }
 
-    const [
-      rawDeliveriesCount,
-      queuedJobsCount,
-      pendingEventsCount,
-      deadLetterEventsCount,
-    ] = await Promise.all([
-      this.rawEvents.count(),
-      this.jobs.count(),
-      this.jobs.countBy({
-        status: In([JobStatus.Pending, JobStatus.Deferred]),
-      }),
-      this.deadLetters.count(),
-    ]);
+    const [rawDeliveriesCount, pendingEventsCount, deadLetterEventsCount] =
+      await Promise.all([
+        this.rawEvents.count(),
+        this.rawEvents.countBy({
+          processingStatus: In([
+            ProcessingStatus.Pending,
+            ProcessingStatus.Retry,
+          ]),
+        }),
+        this.deadLetters.count(),
+      ]);
 
     return {
       validEventsCount: row.validEventsCount,
-      acceptedEventsCount: row.acceptedEventsCount,
-      partiallyAppliedEventsCount: row.partiallyAppliedEventsCount,
       rejectedEventsCount: row.rejectedEventsCount,
       duplicateEventsCount: row.duplicateEventsCount,
       processedEventsCount: row.processedEventsCount,
@@ -56,7 +49,6 @@ export class StatsService {
           ? 0
           : row.totalProcessingTimeMs / row.processedEventsCount,
       pendingEventsCount,
-      queuedJobsCount,
       rawDeliveriesCount,
       deadLetterEventsCount,
       updatedAt: row.updatedAt,

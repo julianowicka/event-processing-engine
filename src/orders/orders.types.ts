@@ -1,9 +1,9 @@
 import type {
   EngineDecision,
-  JobStatus,
+  ProcessingStatus,
   OrderHistoryDecision,
   OrderStatus,
-} from '../events/event.types';
+} from '../events/types/event.types';
 import type { JsonObject } from '../common/json.types';
 
 export interface OrderCurrentState {
@@ -13,9 +13,6 @@ export interface OrderCurrentState {
   currency: string | null;
   paidAmountMinor: number;
   refundedAmountMinor: number;
-  version: number;
-  maxAcceptedEventTimestamp: number;
-  lastAcceptedEventId: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -38,7 +35,6 @@ export interface OrderHistoryEntry {
 export interface OrderDecisionEntry {
   id: number;
   rawIncomingEventId: number;
-  processingJobId: number;
   eventId: string | null;
   orderId: string | null;
   type: string | null;
@@ -46,7 +42,10 @@ export interface OrderDecisionEntry {
   decision: EngineDecision;
   reasonCode: string;
   reasonMessage: string;
-  details: JsonObject;
+  fromStatus: OrderStatus | null;
+  toStatus: OrderStatus | null;
+  changedFields: JsonObject;
+  skippedFields: JsonObject;
   processingTimeMs: number;
   createdAt: string;
 }
@@ -54,17 +53,15 @@ export interface OrderDecisionEntry {
 export interface OrderPendingJob {
   id: number;
   rawIncomingEventId: number;
-  status: JobStatus;
+  status: ProcessingStatus;
   availableAt: string;
   attempts: number;
-  lastReasonCode: string | null;
+  lastErrorMessage: string | null;
   eventId: string | null;
   orderId: string | null;
   type: string | null;
   timestamp: number | null;
-  latestDecision: OrderDecisionEntry | null;
-  createdAt: string;
-  updatedAt: string;
+  receivedAt: string;
 }
 
 export interface OrderDetailsResponse {

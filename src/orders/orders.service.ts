@@ -4,12 +4,10 @@ import { In, Repository } from 'typeorm';
 import { parseJsonObject } from '../common/json.util';
 import {
   EventDecisionEntity,
-  EventProcessingJobEntity,
   OrderEntity,
-  OrderHistoryEntity,
   RawIncomingEventEntity,
 } from '../database/entities';
-import { EngineDecision, JobStatus } from '../events/event.types';
+import { EngineDecision, ProcessingStatus } from '../events/types/event.types';
 import type {
   OrderCurrentState,
   OrderDecisionEntry,
@@ -23,14 +21,10 @@ export class OrdersService {
   constructor(
     @InjectRepository(OrderEntity)
     private readonly orders: Repository<OrderEntity>,
-    @InjectRepository(OrderHistoryEntity)
-    private readonly history: Repository<OrderHistoryEntity>,
     @InjectRepository(EventDecisionEntity)
     private readonly decisions: Repository<EventDecisionEntity>,
     @InjectRepository(RawIncomingEventEntity)
     private readonly rawEvents: Repository<RawIncomingEventEntity>,
-    @InjectRepository(EventProcessingJobEntity)
-    private readonly jobs: Repository<EventProcessingJobEntity>,
   ) {}
 
   async getOrderDetails(orderId: string): Promise<OrderDetailsResponse> {
@@ -44,7 +38,7 @@ export class OrdersService {
     }
 
     const [history, pendingJobs] = await Promise.all([
-      this.readHistory(orderId),
+      Promise.resolve(this.readHistory(auditLog)),
       this.readPendingJobs(orderId),
     ]);
 
@@ -80,54 +74,45 @@ export class OrdersService {
       currency: order.currency,
       paidAmountMinor: order.paidAmountMinor,
       refundedAmountMinor: order.refundedAmountMinor,
-      version: order.version,
-      maxAcceptedEventTimestamp: order.maxAcceptedEventTimestamp,
-      lastAcceptedEventId: order.lastAcceptedEventId,
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
     };
   }
 
-  private async readHistory(orderId: string): Promise<OrderHistoryEntry[]> {
-    const history = await this.history.find({
-      where: { orderId },
-      order: { id: 'ASC' },
-    });
-
-    return history.map((entry) => ({
-      id: entry.id,
-      eventId: entry.eventId,
-      type: entry.eventType,
-      timestamp: entry.eventTimestamp,
-      processedAt: entry.processedAt,
-      fromStatus: entry.fromStatus,
-      toStatus: entry.toStatus,
-      changedFields: parseJsonObject(entry.changedFieldsJson),
-      skippedFields: parseJsonObject(entry.skippedFieldsJson),
-      decision: entry.decision,
-      reasonCode: entry.reasonCode,
-      createdAt: entry.createdAt,
-    }));
+  private readHistory(auditLog: OrderDecisionEntry[]): OrderHistoryEntry[] {
+    return auditLog
+      .filter(
+        (entry) =>
+          (entry.decision === EngineDecision.Accepted ||
+            entry.decision === EngineDecision.PartiallyApplied) &&
+          entry.eventId !== null &&
+          entry.type !== null &&
+          entry.timestamp !== null &&
+          entry.toStatus !== null,
+      )
+      .map(
+        (entry) =>
+          ({
+            id: entry.id,
+            eventId: entry.eventId,
+            type: entry.type,
+            timestamp: entry.timestamp,
+            processedAt: entry.createdAt,
+            fromStatus: entry.fromStatus,
+            toStatus: entry.toStatus,
+            changedFields: entry.changedFields,
+            skippedFields: entry.skippedFields,
+            decision: entry.decision,
+            reasonCode: entry.reasonCode,
+            createdAt: entry.createdAt,
+          }) as OrderHistoryEntry,
+      );
   }
 
   private async readAuditLog(orderId: string): Promise<OrderDecisionEntry[]> {
-    const decisions = await this.decisions.find({
-      where: { orderId },
-      order: { id: 'ASC' },
-    });
-    return decisions.map((decision) => this.mapDecision(decision));
-  }
-
-  private async readPendingJobs(orderId: string): Promise<OrderPendingJob[]> {
     const rawEvents = await this.rawEvents.find({
       where: { orderId },
-      select: {
-        id: true,
-        eventId: true,
-        orderId: true,
-        type: true,
-        eventTimestamp: true,
-      },
+      order: { id: 'ASC' },
     });
 
     if (rawEvents.length === 0) {
@@ -135,61 +120,60 @@ export class OrdersService {
     }
 
     const rawById = new Map(rawEvents.map((raw) => [raw.id, raw]));
-    const jobs = await this.jobs.find({
+    const decisions = await this.decisions.find({
+      where: { rawIncomingEventId: In(rawEvents.map((raw) => raw.id)) },
+      order: { id: 'ASC' },
+    });
+    return decisions.map((decision) =>
+      this.mapDecision(decision, rawById.get(decision.rawIncomingEventId)!),
+    );
+  }
+
+  private async readPendingJobs(orderId: string): Promise<OrderPendingJob[]> {
+    const pendingEvents = await this.rawEvents.find({
       where: {
-        rawIncomingEventId: In(rawEvents.map((raw) => raw.id)),
-        status: In([JobStatus.Pending, JobStatus.Deferred]),
+        orderId,
+        processingStatus: In([
+          ProcessingStatus.Pending,
+          ProcessingStatus.Retry,
+        ]),
       },
       order: { id: 'ASC' },
     });
-    const decisionIds = jobs
-      .map((job) => job.lastDecisionId)
-      .filter((id): id is number => id !== null);
-    const decisions =
-      decisionIds.length === 0
-        ? []
-        : await this.decisions.findBy({ id: In(decisionIds) });
-    const decisionById = new Map(
-      decisions.map((decision) => [decision.id, decision]),
-    );
 
-    return jobs.map((job) => {
-      const raw = rawById.get(job.rawIncomingEventId)!;
-      const decision = job.lastDecisionId
-        ? decisionById.get(job.lastDecisionId)
-        : undefined;
-
-      return {
-        id: job.id,
-        rawIncomingEventId: job.rawIncomingEventId,
-        status: job.status,
-        availableAt: job.availableAt,
-        attempts: job.attempts,
-        lastReasonCode: job.lastReasonCode,
-        eventId: raw.eventId,
-        orderId: raw.orderId,
-        type: raw.type,
-        timestamp: raw.eventTimestamp,
-        latestDecision: decision ? this.mapDecision(decision) : null,
-        createdAt: job.createdAt,
-        updatedAt: job.updatedAt,
-      };
-    });
+    return pendingEvents.map((raw) => ({
+      id: raw.id,
+      rawIncomingEventId: raw.id,
+      status: raw.processingStatus,
+      availableAt: raw.availableAt,
+      attempts: raw.attempts,
+      lastErrorMessage: raw.lastErrorMessage,
+      eventId: raw.eventId,
+      orderId: raw.orderId,
+      type: raw.type,
+      timestamp: raw.eventTimestamp,
+      receivedAt: raw.receivedAt,
+    }));
   }
 
-  private mapDecision(decision: EventDecisionEntity): OrderDecisionEntry {
+  private mapDecision(
+    decision: EventDecisionEntity,
+    raw: RawIncomingEventEntity,
+  ): OrderDecisionEntry {
     return {
       id: decision.id,
       rawIncomingEventId: decision.rawIncomingEventId,
-      processingJobId: decision.eventProcessingJobId,
-      eventId: decision.eventId,
-      orderId: decision.orderId,
-      type: decision.type,
-      timestamp: decision.timestamp,
+      eventId: raw.eventId,
+      orderId: raw.orderId,
+      type: raw.type,
+      timestamp: raw.eventTimestamp,
       decision: decision.decision,
       reasonCode: decision.reasonCode,
       reasonMessage: decision.reasonMessage,
-      details: parseJsonObject(decision.detailsJson),
+      fromStatus: decision.fromStatus,
+      toStatus: decision.toStatus,
+      changedFields: parseJsonObject(decision.changedFieldsJson),
+      skippedFields: parseJsonObject(decision.skippedFieldsJson),
       processingTimeMs: decision.processingTimeMs,
       createdAt: decision.createdAt,
     };

@@ -1,22 +1,13 @@
-import { Column, Entity, PrimaryColumn } from 'typeorm';
+import { Check, Column, Entity, PrimaryColumn } from 'typeorm';
 
 @Entity('stats')
+@Check('chk_stats_singleton', 'id = 1')
 export class EngineStatsEntity {
   @PrimaryColumn({ type: 'integer' })
   id!: number;
 
   @Column({ name: 'valid_events_count', type: 'integer', default: 0 })
   validEventsCount!: number;
-
-  @Column({ name: 'accepted_events_count', type: 'integer', default: 0 })
-  acceptedEventsCount!: number;
-
-  @Column({
-    name: 'partially_applied_events_count',
-    type: 'integer',
-    default: 0,
-  })
-  partiallyAppliedEventsCount!: number;
 
   @Column({ name: 'rejected_events_count', type: 'integer', default: 0 })
   rejectedEventsCount!: number;

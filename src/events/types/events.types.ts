@@ -1,4 +1,4 @@
-import type { JsonValue } from '../common/json.types';
+import type { JsonValue } from '../../common/json.types';
 
 export type QueueEventInput = JsonValue;
 
@@ -9,13 +9,11 @@ export interface EventProjection {
   orderId: string | null;
   type: string | null;
   timestamp: number | null;
-  payloadJson: string | null;
   rawEventJson: string;
 }
 
 export interface QueuedEventRecord {
   incomingEventId: number;
-  processingJobId: number;
   projection: EventProjection;
 }
 
@@ -29,7 +27,6 @@ export enum QueueEventsMode {
 
 export interface QueuedEventResult {
   incomingEventId: number;
-  processingJobId: number;
   eventId: string | null;
   orderId: string | null;
   type: string | null;
