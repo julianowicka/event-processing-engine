@@ -3,6 +3,7 @@
   "rootDir": ".",
   "testEnvironment": "node",
   "testRegex": ".*__tests__.*\\.e2e-spec\\.ts$",
+  "testPathIgnorePatterns": ["<rootDir>/__tests__/deployed/"],
   "transform": {
     "^.+\\.(t|j)s$": "ts-jest"
   }

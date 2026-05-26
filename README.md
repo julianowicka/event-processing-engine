@@ -341,7 +341,7 @@ Deployed smoke/load tests are opt-in because they write synthetic `smoke-*`,
 `hostile-*`, `dupe-*`, and `load-*` events to the target database:
 
 ```bash
-E2E_BASE_URL=https://event-processing-engine.julianowicka.dev yarn test:e2e:deployed
+yarn test:e2e:deployed
 
 E2E_BASE_URL=https://event-processing-engine.julianowicka.dev \
 E2E_RUN_LOAD=true \
@@ -350,8 +350,10 @@ E2E_LOAD_CONCURRENCY=25 \
 yarn test:e2e:deployed
 ```
 
-`E2E_BASE_URL` selects the deployed API origin, `E2E_RUN_LOAD=true` enables the
-load probe, and `E2E_LOAD_REQUESTS` / `E2E_LOAD_CONCURRENCY` control its volume.
+By default deployed e2e tests target
+`https://event-processing-engine.julianowicka.dev`. `E2E_BASE_URL` overrides
+the deployed API origin, `E2E_RUN_LOAD=true` enables the load probe, and
+`E2E_LOAD_REQUESTS` / `E2E_LOAD_CONCURRENCY` control its volume.
 
 ## Project Map
 

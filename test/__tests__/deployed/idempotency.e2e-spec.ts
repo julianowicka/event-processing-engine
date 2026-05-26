@@ -47,8 +47,8 @@ describeDeployed('Deployed idempotency and retry behaviour (e2e)', () => {
 
     expect(order.currentState).toMatchObject({
       status: 'PAID',
-      paidAmountMinor: 10000,
-      refundedAmountMinor: 0,
+      paidAmount: 100,
+      refundedAmount: 0,
     });
     expect(order.history.map((entry) => entry.eventId)).toEqual([
       eventId(runId, 1),

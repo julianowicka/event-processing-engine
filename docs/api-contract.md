@@ -93,10 +93,10 @@ information requested by the assignment:
   "currentState": {
     "orderId": "ord-501",
     "status": "CREATED",
-    "amountMinor": 19999,
+    "amount": 199.99,
     "currency": "PLN",
-    "paidAmountMinor": 0,
-    "refundedAmountMinor": 0,
+    "paidAmount": 0,
+    "refundedAmount": 0,
     "createdAt": "2026-01-01T12:00:00.000Z",
     "updatedAt": "2026-01-01T12:00:00.000Z"
   },
@@ -113,7 +113,7 @@ information requested by the assignment:
       "reasonCode": "APPLIED",
       "changedFields": {
         "status": "CREATED",
-        "amountMinor": 19999,
+        "amount": 199.99,
         "currency": "PLN"
       },
       "skippedFields": {},
@@ -137,7 +137,7 @@ information requested by the assignment:
       "toStatus": "CREATED",
       "changedFields": {
         "status": "CREATED",
-        "amountMinor": 19999,
+        "amount": 199.99,
         "currency": "PLN"
       },
       "skippedFields": {},
@@ -189,7 +189,9 @@ Returns exactly the four required precomputed statistics:
 
 ## Event And Ordering Rules
 
-- Money fields are stored as integer minor units.
+- Money fields are stored as integer minor units and mapped to major-unit
+  `amount`, `paidAmount`, and `refundedAmount` fields only when returned by the
+  API.
 - `ORDER_CREATED` creates an order in `CREATED` status.
 - `ORDER_UPDATED` modifies only supplied non-lifecycle fields, currently
   `amount` and `currency`.

@@ -6,6 +6,7 @@ import {
   parseJsonObject,
   parseJsonValue,
 } from '../../common/json.util';
+import { mapMoneyFieldsForResponse } from '../../common/money-response.mapper';
 import {
   EventDecisionEntity,
   RawIncomingEventEntity,
@@ -106,8 +107,12 @@ export class EventInspectorService {
       reasonMessage: decision.reasonMessage,
       fromStatus: decision.fromStatus,
       toStatus: decision.toStatus,
-      changedFields: parseJsonObject(decision.changedFieldsJson),
-      skippedFields: parseJsonObject(decision.skippedFieldsJson),
+      changedFields: mapMoneyFieldsForResponse(
+        parseJsonObject(decision.changedFieldsJson),
+      ),
+      skippedFields: mapMoneyFieldsForResponse(
+        parseJsonObject(decision.skippedFieldsJson),
+      ),
       processingTimeMs: decision.processingTimeMs,
       createdAt: decision.createdAt,
     };

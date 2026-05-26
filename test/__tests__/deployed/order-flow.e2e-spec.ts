@@ -56,10 +56,10 @@ describeDeployed('Deployed order processing flows (e2e)', () => {
       currentState: {
         orderId: id,
         status: 'PARTIALLY_REFUNDED',
-        amountMinor: 10000,
+        amount: 100,
         currency: 'PLN',
-        paidAmountMinor: 10000,
-        refundedAmountMinor: 2500,
+        paidAmount: 100,
+        refundedAmount: 25,
       },
       rejectedEvents: [],
       pendingJobs: [],

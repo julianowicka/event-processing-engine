@@ -9,10 +9,10 @@ import type { JsonObject } from '../common/json.types';
 export interface OrderCurrentState {
   orderId: string;
   status: OrderStatus;
-  amountMinor: number | null;
+  amount: number | null;
   currency: string | null;
-  paidAmountMinor: number;
-  refundedAmountMinor: number;
+  paidAmount: number;
+  refundedAmount: number;
   createdAt: string;
   updatedAt: string;
 }

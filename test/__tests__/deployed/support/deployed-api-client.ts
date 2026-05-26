@@ -25,10 +25,10 @@ export interface OrderDetailsResponse {
   currentState: {
     orderId: string;
     status: string;
-    amountMinor: number | null;
+    amount: number | null;
     currency: string | null;
-    paidAmountMinor: number;
-    refundedAmountMinor: number;
+    paidAmount: number;
+    refundedAmount: number;
   } | null;
   history: Array<{
     eventId: string;
@@ -71,12 +71,15 @@ export interface StatsResponse {
   averageProcessingTimeMs: number;
 }
 
-export const deployedBaseUrl = process.env.E2E_BASE_URL?.trim().replace(
-  /\/$/,
-  '',
-);
+const defaultDeployedBaseUrl =
+  'https://event-processing-engine.julianowicka.dev';
+const configuredDeployedBaseUrl = process.env.E2E_BASE_URL?.trim();
 
-export const describeDeployed = deployedBaseUrl ? describe : describe.skip;
+export const deployedBaseUrl = (
+  configuredDeployedBaseUrl || defaultDeployedBaseUrl
+).replace(/\/$/, '');
+
+export const describeDeployed = describe;
 
 export class DeployedApiClient {
   constructor(private readonly baseUrl: string) {}

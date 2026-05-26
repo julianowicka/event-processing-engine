@@ -95,14 +95,17 @@ describe('Recruitment task requirements (e2e)', () => {
       currentState: {
         orderId,
         status: 'PARTIALLY_REFUNDED',
-        amountMinor: 19999,
+        amount: 199.99,
         currency: 'PLN',
-        paidAmountMinor: 19999,
-        refundedAmountMinor: 5000,
+        paidAmount: 199.99,
+        refundedAmount: 50,
       },
       rejectedEvents: [],
       pendingJobs: [],
     });
+    expect(order.currentState).not.toHaveProperty('amountMinor');
+    expect(order.currentState).not.toHaveProperty('paidAmountMinor');
+    expect(order.currentState).not.toHaveProperty('refundedAmountMinor');
     expect(order.history.map((entry) => entry.eventId)).toEqual([
       'evt-req-api-001',
       'evt-req-api-002',
@@ -144,7 +147,7 @@ describe('Recruitment task requirements (e2e)', () => {
 
     expect(order.currentState).toMatchObject({
       status: 'CREATED',
-      amountMinor: 10000,
+      amount: 100,
       currency: 'PLN',
     });
     expect(order.history).toEqual([
@@ -217,10 +220,10 @@ describe('Recruitment task requirements (e2e)', () => {
 
     expect(order.currentState).toMatchObject({
       status: 'CREATED',
-      amountMinor: 25000,
+      amount: 250,
       currency: 'EUR',
-      paidAmountMinor: 0,
-      refundedAmountMinor: 0,
+      paidAmount: 0,
+      refundedAmount: 0,
     });
     expect(order.history).toEqual(
       expect.arrayContaining([
@@ -229,7 +232,7 @@ describe('Recruitment task requirements (e2e)', () => {
           decision: 'PARTIALLY_APPLIED',
           reasonCode: 'PARTIAL_MERGE',
           changedFields: { currency: 'EUR' },
-          skippedFields: { amountMinor: 'OBSOLETE_FIELD' },
+          skippedFields: { amount: 'OBSOLETE_FIELD' },
         }),
       ]),
     );
@@ -260,12 +263,12 @@ describe('Recruitment task requirements (e2e)', () => {
 
     const order = await waitForOrder(
       orderId,
-      (candidate) => candidate.currentState?.amountMinor === 25000,
+      (candidate) => candidate.currentState?.amount === 250,
     );
 
     expect(order.currentState).toMatchObject({
       status: 'CREATED',
-      amountMinor: 25000,
+      amount: 250,
       currency: 'PLN',
     });
   });
@@ -396,8 +399,8 @@ describe('Recruitment task requirements (e2e)', () => {
 
     expect(cancelledOrder.currentState).toMatchObject({
       status: 'CANCELLED',
-      paidAmountMinor: 0,
-      refundedAmountMinor: 0,
+      paidAmount: 0,
+      refundedAmount: 0,
     });
     expect(cancelledOrder.rejectedEvents).toEqual([
       expect.objectContaining({
@@ -408,8 +411,8 @@ describe('Recruitment task requirements (e2e)', () => {
 
     expect(refundedOrder.currentState).toMatchObject({
       status: 'REFUNDED',
-      paidAmountMinor: 8000,
-      refundedAmountMinor: 8000,
+      paidAmount: 80,
+      refundedAmount: 80,
     });
     expect(refundedOrder.rejectedEvents).toEqual([]);
   });

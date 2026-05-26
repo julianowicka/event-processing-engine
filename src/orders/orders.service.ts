@@ -3,6 +3,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { parseJsonObject } from '../common/json.util';
 import {
+  mapMoneyFieldsForResponse,
+  minorUnitsToAmount,
+} from '../common/money-response.mapper';
+import {
   EventDecisionEntity,
   OrderEntity,
   RawIncomingEventEntity,
@@ -66,10 +70,13 @@ export class OrdersService {
     return {
       orderId: order.orderId,
       status: order.status,
-      amountMinor: order.amountMinor,
+      amount:
+        order.amountMinor === null
+          ? null
+          : minorUnitsToAmount(order.amountMinor),
       currency: order.currency,
-      paidAmountMinor: order.paidAmountMinor,
-      refundedAmountMinor: order.refundedAmountMinor,
+      paidAmount: minorUnitsToAmount(order.paidAmountMinor),
+      refundedAmount: minorUnitsToAmount(order.refundedAmountMinor),
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
     };
@@ -96,8 +103,8 @@ export class OrdersService {
             processedAt: entry.createdAt,
             fromStatus: entry.fromStatus,
             toStatus: entry.toStatus,
-            changedFields: entry.changedFields,
-            skippedFields: entry.skippedFields,
+            changedFields: mapMoneyFieldsForResponse(entry.changedFields),
+            skippedFields: mapMoneyFieldsForResponse(entry.skippedFields),
             decision: entry.decision,
             reasonCode: entry.reasonCode,
             createdAt: entry.createdAt,
@@ -168,8 +175,12 @@ export class OrdersService {
       reasonMessage: decision.reasonMessage,
       fromStatus: decision.fromStatus,
       toStatus: decision.toStatus,
-      changedFields: parseJsonObject(decision.changedFieldsJson),
-      skippedFields: parseJsonObject(decision.skippedFieldsJson),
+      changedFields: mapMoneyFieldsForResponse(
+        parseJsonObject(decision.changedFieldsJson),
+      ),
+      skippedFields: mapMoneyFieldsForResponse(
+        parseJsonObject(decision.skippedFieldsJson),
+      ),
       processingTimeMs: decision.processingTimeMs,
       createdAt: decision.createdAt,
     };

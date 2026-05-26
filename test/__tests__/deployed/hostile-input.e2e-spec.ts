@@ -93,10 +93,10 @@ describeDeployed('Deployed API hostile input scenarios (e2e)', () => {
 
     expect(order.currentState).toMatchObject({
       status: 'PAID',
-      amountMinor: 10000,
+      amount: 100,
       currency: 'PLN',
-      paidAmountMinor: 10000,
-      refundedAmountMinor: 0,
+      paidAmount: 100,
+      refundedAmount: 0,
     });
     expect(order.auditLog.length).toBeGreaterThanOrEqual(7);
     expect(order.rejectedEvents).toEqual(
@@ -130,8 +130,8 @@ describeDeployed('Deployed API hostile input scenarios (e2e)', () => {
 
     expect(order.currentState).toMatchObject({
       status: 'CANCELLED',
-      paidAmountMinor: 0,
-      refundedAmountMinor: 0,
+      paidAmount: 0,
+      refundedAmount: 0,
     });
     expect(order.rejectedEvents).toEqual([
       expect.objectContaining({

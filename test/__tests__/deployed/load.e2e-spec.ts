@@ -79,8 +79,8 @@ describeLoad('Deployed API load probe (e2e)', () => {
 
       expect(order.currentState).toMatchObject({
         status: 'PAID',
-        amountMinor: 10000,
-        paidAmountMinor: 10000,
+        amount: 100,
+        paidAmount: 100,
       });
       expect(order.pendingJobs).toEqual([]);
     }

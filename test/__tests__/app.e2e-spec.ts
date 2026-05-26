@@ -214,8 +214,8 @@ describe('Event ingestion API (e2e)', () => {
 
     expect(order.currentState).toMatchObject({
       status: 'PARTIALLY_REFUNDED',
-      paidAmountMinor: 12000,
-      refundedAmountMinor: 3000,
+      paidAmount: 120,
+      refundedAmount: 30,
     });
     expect(order.pendingJobs).toEqual([]);
 
@@ -420,13 +420,16 @@ describe('Event ingestion API (e2e)', () => {
           currentState: {
             orderId,
             status: 'CANCELLED',
-            amountMinor: 8000,
+            amount: 80,
             currency: 'PLN',
-            paidAmountMinor: 0,
-            refundedAmountMinor: 0,
+            paidAmount: 0,
+            refundedAmount: 0,
           },
           pendingJobs: [],
         });
+        expect(body.currentState).not.toHaveProperty('amountMinor');
+        expect(body.currentState).not.toHaveProperty('paidAmountMinor');
+        expect(body.currentState).not.toHaveProperty('refundedAmountMinor');
         expect(body.history).toHaveLength(2);
         expect(body.history).toEqual(
           expect.arrayContaining([
@@ -439,7 +442,7 @@ describe('Event ingestion API (e2e)', () => {
               reasonCode: 'APPLIED',
               changedFields: {
                 status: 'CREATED',
-                amountMinor: 8000,
+                amount: 80,
                 currency: 'PLN',
               },
             }),
@@ -453,6 +456,12 @@ describe('Event ingestion API (e2e)', () => {
               changedFields: { status: 'CANCELLED' },
             }),
           ]),
+        );
+        const creationHistory = body.history.find(
+          (entry) => entry.eventId === 'evt-read-model-001',
+        );
+        expect(creationHistory?.changedFields).not.toHaveProperty(
+          'amountMinor',
         );
         expect(body.rejectedEvents).toEqual([
           expect.objectContaining({
@@ -525,8 +534,13 @@ describe('Event ingestion API (e2e)', () => {
             eventId,
             orderId,
             decision: EngineDecision.Accepted,
+            changedFields: expect.objectContaining({
+              amount: 80,
+              currency: 'PLN',
+            }),
           }),
         ]);
+        expect(body.history[0].changedFields).not.toHaveProperty('amountMinor');
       });
   });
 

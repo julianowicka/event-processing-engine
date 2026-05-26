@@ -757,15 +757,12 @@ function renderOrderInspector(details) {
   orderSummary.append(
     summaryItem('Order', details.orderId),
     summaryItem('Status', state ? state.status : 'No current state'),
-    summaryItem('Amount minor', state ? displayValue(state.amountMinor) : '-'),
+    summaryItem('Amount', state ? displayValue(state.amount) : '-'),
     summaryItem('Currency', state ? displayValue(state.currency) : '-'),
+    summaryItem('Paid amount', state ? displayValue(state.paidAmount) : '-'),
     summaryItem(
-      'Paid minor',
-      state ? displayValue(state.paidAmountMinor) : '-',
-    ),
-    summaryItem(
-      'Refunded minor',
-      state ? displayValue(state.refundedAmountMinor) : '-',
+      'Refunded amount',
+      state ? displayValue(state.refundedAmount) : '-',
     ),
     summaryItem('Audit rows', String(details.auditLog.length)),
   );
