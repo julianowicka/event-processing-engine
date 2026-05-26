@@ -133,7 +133,7 @@ textarea {
 
 .quick-links {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
   margin-bottom: 18px;
 }
@@ -662,10 +662,6 @@ pre {
 }
 
 @media (max-width: 1080px) {
-  .quick-links {
-    grid-template-columns: 1fr;
-  }
-
   .metrics {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -724,8 +720,38 @@ pre {
     padding: 84px 0 18px;
   }
 
+  .quick-links {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
   .quick-link {
-    padding: 14px;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 88px;
+    padding: 10px;
+  }
+
+  .quick-link-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 7px;
+  }
+
+  .quick-link-icon svg {
+    width: 17px;
+    height: 17px;
+  }
+
+  .quick-link strong {
+    font-size: 0.78rem;
+    line-height: 1.18;
+  }
+
+  .quick-link span span {
+    display: none;
   }
 
   .topbar,
