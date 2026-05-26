@@ -46,21 +46,18 @@ describeDeployed('Deployed order processing flows (e2e)', () => {
       client,
       id,
       (candidate) =>
-        candidate.currentState?.status === 'PARTIALLY_REFUNDED' &&
+        candidate.status === 'PARTIALLY_REFUNDED' &&
         candidate.history.length === 3 &&
         candidate.pendingJobs.length === 0,
     );
 
     expect(order).toMatchObject({
       orderId: id,
-      currentState: {
-        orderId: id,
-        status: 'PARTIALLY_REFUNDED',
-        amount: 100,
-        currency: 'PLN',
-        paidAmount: 100,
-        refundedAmount: 25,
-      },
+      status: 'PARTIALLY_REFUNDED',
+      amount: 100,
+      currency: 'PLN',
+      paidAmount: 100,
+      refundedAmount: 25,
       rejectedEvents: [],
       pendingJobs: [],
     });

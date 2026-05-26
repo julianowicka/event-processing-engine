@@ -296,6 +296,23 @@ Queued response:
 }
 ```
 
+After the worker finalizes the creation event, state fields returned by
+`GET /api/orders/ord-501` are exposed at the response root. Response excerpt:
+
+```json
+{
+  "orderId": "ord-501",
+  "status": "CREATED",
+  "amount": 199.99,
+  "currency": "PLN",
+  "paidAmount": 0,
+  "refundedAmount": 0
+}
+```
+
+The full response also includes `history`, `rejectedEvents`, `pendingJobs`, and
+`auditLog` collections.
+
 ## Local Development
 
 Requirements:

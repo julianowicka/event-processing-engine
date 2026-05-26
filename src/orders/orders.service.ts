@@ -43,8 +43,7 @@ export class OrdersService {
     }
 
     return {
-      orderId,
-      currentState,
+      ...(currentState ?? { orderId }),
       history: this.readHistory(auditLog),
       rejectedEvents: auditLog.filter((entry) =>
         [

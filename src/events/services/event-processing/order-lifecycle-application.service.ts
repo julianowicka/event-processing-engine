@@ -95,10 +95,41 @@ export class OrderLifecycleApplicationService {
       context.order.refundedAmountMinor + refundAmountMinor;
     const nextStatus = await this.refundStatus(context, refundedAmountMinor);
 
-    await this.applyStatusWhenCurrent(context, nextStatus, {
+    await this.applyRefund(context, nextStatus, {
       refundedAmountMinor,
       status: nextStatus,
     });
+  }
+
+  private async applyRefund(
+    context: OrderEventHandlingContext,
+    toStatus: OrderStatus,
+    changedFields: JsonObject,
+  ): Promise<void> {
+    await context.manager.getRepository(OrderEntity).update(
+      { orderId: context.event.orderId },
+      {
+        ...changedFields,
+        updatedAt: new Date().toISOString(),
+      },
+    );
+
+    if (await this.fieldVersions.canApplyStatus(context)) {
+      await this.fieldVersions.upsertFieldVersion(
+        context.manager,
+        context.event.orderId,
+        OrderVersionedField.Status,
+        context.event.timestamp,
+        context.event.eventId,
+      );
+    }
+
+    await this.decision.accept(
+      context,
+      context.order?.status ?? null,
+      toStatus,
+      changedFields,
+    );
   }
 
   private async applyStatusWhenCurrent(

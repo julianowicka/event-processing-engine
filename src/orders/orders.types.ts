@@ -64,9 +64,10 @@ export interface OrderPendingJob {
   receivedAt: string;
 }
 
-export interface OrderDetailsResponse {
+export interface OrderDetailsResponse extends Partial<
+  Omit<OrderCurrentState, 'orderId'>
+> {
   orderId: string;
-  currentState: OrderCurrentState | null;
   history: OrderHistoryEntry[];
   rejectedEvents: OrderDecisionEntry[];
   pendingJobs: OrderPendingJob[];

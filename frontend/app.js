@@ -752,17 +752,29 @@ function renderOrderInspector(details) {
     return;
   }
 
-  const state = details.currentState;
+  const hasCurrentState = Object.prototype.hasOwnProperty.call(
+    details,
+    'status',
+  );
   orderSummary.innerHTML = '';
   orderSummary.append(
     summaryItem('Order', details.orderId),
-    summaryItem('Status', state ? state.status : 'No current state'),
-    summaryItem('Amount', state ? displayValue(state.amount) : '-'),
-    summaryItem('Currency', state ? displayValue(state.currency) : '-'),
-    summaryItem('Paid amount', state ? displayValue(state.paidAmount) : '-'),
+    summaryItem(
+      'Status',
+      hasCurrentState ? details.status : 'No current state',
+    ),
+    summaryItem('Amount', hasCurrentState ? displayValue(details.amount) : '-'),
+    summaryItem(
+      'Currency',
+      hasCurrentState ? displayValue(details.currency) : '-',
+    ),
+    summaryItem(
+      'Paid amount',
+      hasCurrentState ? displayValue(details.paidAmount) : '-',
+    ),
     summaryItem(
       'Refunded amount',
-      state ? displayValue(state.refundedAmount) : '-',
+      hasCurrentState ? displayValue(details.refundedAmount) : '-',
     ),
     summaryItem('Audit rows', String(details.auditLog.length)),
   );

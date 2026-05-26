@@ -158,6 +158,51 @@ describe('OrderLifecycleApplicationService', () => {
     );
   });
 
+  it('applies an older distinct refund without replacing newer status metadata', async () => {
+    const update = createUpdateMock();
+    const canApplyStatus = jest
+      .fn<
+        ReturnType<OrderFieldVersionService['canApplyStatus']>,
+        Parameters<OrderFieldVersionService['canApplyStatus']>
+      >()
+      .mockResolvedValue(false);
+    const fieldVersions = createFieldVersions({ canApplyStatus });
+    const decision = createDecision();
+    const context = createContext({
+      manager: createManager(update),
+      order: createOrder({
+        status: OrderStatus.PartiallyRefunded,
+        paidAmountMinor: 10000,
+        refundedAmountMinor: 3000,
+      }),
+      type: SupportedEventType.RefundIssued,
+      payload: { refundAmount: 20 },
+    });
+    const service = createService(decision.service, fieldVersions.service);
+
+    await service.issueRefund(context);
+
+    expect(fieldVersions.canApplyStatus).toHaveBeenCalledWith(context);
+    expect(update).toHaveBeenCalledWith(
+      { orderId: 'ord-1' },
+      expect.objectContaining({
+        refundedAmountMinor: 5000,
+        status: OrderStatus.PartiallyRefunded,
+      }),
+    );
+    expect(fieldVersions.upsertFieldVersion).not.toHaveBeenCalled();
+    expect(decision.accept).toHaveBeenCalledWith(
+      context,
+      OrderStatus.PartiallyRefunded,
+      OrderStatus.PartiallyRefunded,
+      {
+        refundedAmountMinor: 5000,
+        status: OrderStatus.PartiallyRefunded,
+      },
+    );
+    expect(decision.rejectObsoleteStatus).not.toHaveBeenCalled();
+  });
+
   it('rejects refunds above the remaining captured amount', async () => {
     const update = createUpdateMock();
     const decision = createDecision();

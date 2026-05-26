@@ -76,6 +76,16 @@ Decision: `REJECTED`.
 
 Action: preserve current state and audit `REFUND_EXCEEDS_CAPTURED`.
 
+## Delayed Distinct Refund
+
+A distinct refund arrives after a newer refund has already been accepted.
+
+Decision: `ACCEPTED` when its delta keeps the cumulative refund total within
+the captured payment amount.
+
+Action: add the refund delta and derive the status from the cumulative total;
+do not move newer status-version timestamp metadata backwards.
+
 ## Late Partial Payload
 
 Older event contains multiple fields.

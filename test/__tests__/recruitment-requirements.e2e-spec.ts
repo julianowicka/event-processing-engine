@@ -34,7 +34,20 @@ describe('Recruitment task requirements (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    app.setGlobalPrefix('api');
+    app.setGlobalPrefix('api', {
+      exclude: [
+        'events',
+        'events/:eventId',
+        'api/events',
+        'api/events/:eventId',
+        'orders/:id',
+        'api/orders/:id',
+        'stats',
+        'api/stats',
+        'health',
+        'api/health',
+      ],
+    });
     await app.init();
   });
 
@@ -42,6 +55,46 @@ describe('Recruitment task requirements (e2e)', () => {
     await app.close();
     fs.rmSync(directory, { recursive: true, force: true });
     delete process.env.SQLITE_DB_PATH;
+  });
+
+  it('accepts event batches through the required /events endpoint alias', async () => {
+    await request(app.getHttpServer())
+      .post('/events')
+      .send([
+        {
+          eventId: 'evt-required-alias-001',
+          orderId: 'ord-required-alias-001',
+          type: 'ORDER_CREATED',
+          timestamp: 1710001000,
+          payload: { amount: 199.99, currency: 'PLN' },
+        },
+      ])
+      .expect(201)
+      .expect((response) => {
+        expect(response.body).toMatchObject({
+          mode: 'ASYNC_WORKER',
+          summary: { queued: 1 },
+        });
+      });
+  });
+
+  it('exposes health through the unprefixed endpoint alias', async () => {
+    await request(app.getHttpServer())
+      .get('/health')
+      .expect(200)
+      .expect((response) => {
+        const body = response.body as {
+          status: string;
+          database: string;
+          timestamp: string;
+        };
+
+        expect(body).toMatchObject({
+          status: 'ok',
+          database: process.env.SQLITE_DB_PATH,
+        });
+        expect(body.timestamp).toEqual(expect.any(String));
+      });
   });
 
   it('accepts event batches and exposes current order state, history, rejected events and stats', async () => {
@@ -86,26 +139,23 @@ describe('Recruitment task requirements (e2e)', () => {
 
     const order = await waitForOrder(
       orderId,
-      (candidate) =>
-        candidate.currentState?.status === OrderStatus.PartiallyRefunded,
+      (candidate) => candidate.status === OrderStatus.PartiallyRefunded,
     );
 
     expect(order).toMatchObject({
       orderId,
-      currentState: {
-        orderId,
-        status: 'PARTIALLY_REFUNDED',
-        amount: 199.99,
-        currency: 'PLN',
-        paidAmount: 199.99,
-        refundedAmount: 50,
-      },
+      status: 'PARTIALLY_REFUNDED',
+      amount: 199.99,
+      currency: 'PLN',
+      paidAmount: 199.99,
+      refundedAmount: 50,
       rejectedEvents: [],
       pendingJobs: [],
     });
-    expect(order.currentState).not.toHaveProperty('amountMinor');
-    expect(order.currentState).not.toHaveProperty('paidAmountMinor');
-    expect(order.currentState).not.toHaveProperty('refundedAmountMinor');
+    expect(order).not.toHaveProperty('amountMinor');
+    expect(order).not.toHaveProperty('paidAmountMinor');
+    expect(order).not.toHaveProperty('refundedAmountMinor');
+    expect(order).not.toHaveProperty('currentState');
     expect(order.history.map((entry) => entry.eventId)).toEqual([
       'evt-req-api-001',
       'evt-req-api-002',
@@ -145,7 +195,7 @@ describe('Recruitment task requirements (e2e)', () => {
         candidate.rejectedEvents.length === 1,
     );
 
-    expect(order.currentState).toMatchObject({
+    expect(order).toMatchObject({
       status: 'CREATED',
       amount: 100,
       currency: 'PLN',
@@ -218,7 +268,7 @@ describe('Recruitment task requirements (e2e)', () => {
       ),
     );
 
-    expect(order.currentState).toMatchObject({
+    expect(order).toMatchObject({
       status: 'CREATED',
       amount: 250,
       currency: 'EUR',
@@ -263,13 +313,104 @@ describe('Recruitment task requirements (e2e)', () => {
 
     const order = await waitForOrder(
       orderId,
-      (candidate) => candidate.currentState?.amount === 250,
+      (candidate) => candidate.amount === 250,
     );
 
-    expect(order.currentState).toMatchObject({
+    expect(order).toMatchObject({
       status: 'CREATED',
       amount: 250,
       currency: 'PLN',
+    });
+  });
+
+  it('accumulates a distinct delayed refund after a newer refund was applied', async () => {
+    const orderId = 'ord-req-delayed-refund-001';
+
+    await request(app.getHttpServer())
+      .post('/events')
+      .send([
+        {
+          eventId: 'evt-req-delayed-refund-001',
+          orderId,
+          type: 'ORDER_CREATED',
+          timestamp: 1710001000,
+          payload: { amount: 100, currency: 'PLN' },
+        },
+        {
+          eventId: 'evt-req-delayed-refund-002',
+          orderId,
+          type: 'PAYMENT_CAPTURED',
+          timestamp: 1710002000,
+          payload: { amount: 100 },
+        },
+        {
+          eventId: 'evt-req-delayed-refund-004',
+          orderId,
+          type: 'REFUND_ISSUED',
+          timestamp: 1710004000,
+          payload: { refundAmount: 30 },
+        },
+      ])
+      .expect(201);
+
+    await waitForOrder(
+      orderId,
+      (candidate) =>
+        candidate.status === OrderStatus.PartiallyRefunded &&
+        candidate.refundedAmount === 30,
+    );
+
+    await request(app.getHttpServer())
+      .post('/events')
+      .send([
+        {
+          eventId: 'evt-req-delayed-refund-003',
+          orderId,
+          type: 'REFUND_ISSUED',
+          timestamp: 1710003000,
+          payload: { refundAmount: 70 },
+        },
+      ])
+      .expect(201);
+
+    const order = await waitForOrder(
+      orderId,
+      (candidate) => candidate.status === OrderStatus.Refunded,
+    );
+
+    expect(order).toMatchObject({
+      status: 'REFUNDED',
+      paidAmount: 100,
+      refundedAmount: 100,
+      rejectedEvents: [],
+    });
+    expect(order.history).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventId: 'evt-req-delayed-refund-004',
+          decision: EngineDecision.Accepted,
+          toStatus: OrderStatus.PartiallyRefunded,
+        }),
+        expect.objectContaining({
+          eventId: 'evt-req-delayed-refund-003',
+          decision: EngineDecision.Accepted,
+          toStatus: OrderStatus.Refunded,
+        }),
+      ]),
+    );
+    expect(order.auditLog).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventId: 'evt-req-delayed-refund-003',
+          decision: EngineDecision.Accepted,
+          reasonCode: 'APPLIED',
+        }),
+      ]),
+    );
+    expect(await waitForStats({ validEventsCount: 4 })).toMatchObject({
+      validEventsCount: 4,
+      rejectedEventsCount: 0,
+      duplicateEventsCount: 0,
     });
   });
 
@@ -389,15 +530,15 @@ describe('Recruitment task requirements (e2e)', () => {
     const cancelledOrder = await waitForOrder(
       cancelledOrderId,
       (candidate) =>
-        candidate.currentState?.status === OrderStatus.Cancelled &&
+        candidate.status === OrderStatus.Cancelled &&
         candidate.rejectedEvents.length === 1,
     );
     const refundedOrder = await waitForOrder(
       refundedOrderId,
-      (candidate) => candidate.currentState?.status === OrderStatus.Refunded,
+      (candidate) => candidate.status === OrderStatus.Refunded,
     );
 
-    expect(cancelledOrder.currentState).toMatchObject({
+    expect(cancelledOrder).toMatchObject({
       status: 'CANCELLED',
       paidAmount: 0,
       refundedAmount: 0,
@@ -409,7 +550,7 @@ describe('Recruitment task requirements (e2e)', () => {
       }),
     ]);
 
-    expect(refundedOrder.currentState).toMatchObject({
+    expect(refundedOrder).toMatchObject({
       status: 'REFUNDED',
       paidAmount: 80,
       refundedAmount: 80,
@@ -425,7 +566,7 @@ describe('Recruitment task requirements (e2e)', () => {
 
     for (let attempt = 0; attempt < 40; attempt += 1) {
       const response = await request(app.getHttpServer()).get(
-        `/api/orders/${orderId}`,
+        `/orders/${orderId}`,
       );
       latest = response.body as JsonValue;
 
@@ -459,7 +600,7 @@ describe('Recruitment task requirements (e2e)', () => {
 
     for (let attempt = 0; attempt < 40; attempt += 1) {
       latest = await request(app.getHttpServer())
-        .get('/api/stats')
+        .get('/stats')
         .expect(200)
         .then((response) => response.body as StatsResponse);
 

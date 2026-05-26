@@ -73,11 +73,11 @@ describeLoad('Deployed API load probe (e2e)', () => {
       const order = await waitForOrder(
         client,
         id,
-        (candidate) => candidate.currentState?.status === 'PAID',
+        (candidate) => candidate.status === 'PAID',
         60_000,
       );
 
-      expect(order.currentState).toMatchObject({
+      expect(order).toMatchObject({
         status: 'PAID',
         amount: 100,
         paidAmount: 100,

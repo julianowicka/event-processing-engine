@@ -2,7 +2,7 @@ import { Controller, Get, Param } from '@nestjs/common';
 import { OrdersService } from './orders.service';
 import type { OrderDetailsResponse } from './orders.types';
 
-@Controller('orders')
+@Controller(['orders', 'api/orders'])
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 

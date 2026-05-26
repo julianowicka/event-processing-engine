@@ -29,11 +29,7 @@ describeDeployed('Deployed idempotency and retry behaviour (e2e)', () => {
     const batch = [createdEvent(runId, 1), paidEvent(runId, 2)];
 
     await client.post<QueueResponse>('/api/events', batch);
-    await waitForOrder(
-      client,
-      id,
-      (candidate) => candidate.currentState?.status === 'PAID',
-    );
+    await waitForOrder(client, id, (candidate) => candidate.status === 'PAID');
 
     await client.post<QueueResponse>('/api/events', batch);
 
@@ -41,11 +37,10 @@ describeDeployed('Deployed idempotency and retry behaviour (e2e)', () => {
       client,
       id,
       (candidate) =>
-        candidate.currentState?.status === 'PAID' &&
-        candidate.rejectedEvents.length === 2,
+        candidate.status === 'PAID' && candidate.rejectedEvents.length === 2,
     );
 
-    expect(order.currentState).toMatchObject({
+    expect(order).toMatchObject({
       status: 'PAID',
       paidAmount: 100,
       refundedAmount: 0,

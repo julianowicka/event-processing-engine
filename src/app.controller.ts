@@ -5,7 +5,7 @@ import { DatabaseService } from './database/database.service';
 export class AppController {
   constructor(private readonly databaseService: DatabaseService) {}
 
-  @Get('health')
+  @Get(['health', 'api/health'])
   health(): { status: 'ok'; database: string; timestamp: string } {
     return {
       status: 'ok',

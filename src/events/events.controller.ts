@@ -14,7 +14,7 @@ import type {
   QueueEventsResponse,
 } from './types/events.types';
 
-@Controller('events')
+@Controller(['events', 'api/events'])
 export class EventsController {
   constructor(
     private readonly eventEnqueuerService: EventEnqueuerService,

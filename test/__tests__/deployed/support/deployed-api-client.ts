@@ -22,14 +22,11 @@ export interface QueueResponse {
 
 export interface OrderDetailsResponse {
   orderId: string;
-  currentState: {
-    orderId: string;
-    status: string;
-    amount: number | null;
-    currency: string | null;
-    paidAmount: number;
-    refundedAmount: number;
-  } | null;
+  status?: string;
+  amount?: number | null;
+  currency?: string | null;
+  paidAmount?: number;
+  refundedAmount?: number;
   history: Array<{
     eventId: string;
     type: string;

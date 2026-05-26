@@ -33,7 +33,20 @@ describe('Event ingestion API (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    app.setGlobalPrefix('api');
+    app.setGlobalPrefix('api', {
+      exclude: [
+        'events',
+        'events/:eventId',
+        'api/events',
+        'api/events/:eventId',
+        'orders/:id',
+        'api/orders/:id',
+        'stats',
+        'api/stats',
+        'health',
+        'api/health',
+      ],
+    });
     await app.init();
   });
 
@@ -212,7 +225,7 @@ describe('Event ingestion API (e2e)', () => {
 
     const order = await waitForOrder('ord-recover-001');
 
-    expect(order.currentState).toMatchObject({
+    expect(order).toMatchObject({
       status: 'PARTIALLY_REFUNDED',
       paidAmount: 120,
       refundedAmount: 30,
@@ -417,19 +430,17 @@ describe('Event ingestion API (e2e)', () => {
 
         expect(body).toMatchObject({
           orderId,
-          currentState: {
-            orderId,
-            status: 'CANCELLED',
-            amount: 80,
-            currency: 'PLN',
-            paidAmount: 0,
-            refundedAmount: 0,
-          },
+          status: 'CANCELLED',
+          amount: 80,
+          currency: 'PLN',
+          paidAmount: 0,
+          refundedAmount: 0,
           pendingJobs: [],
         });
-        expect(body.currentState).not.toHaveProperty('amountMinor');
-        expect(body.currentState).not.toHaveProperty('paidAmountMinor');
-        expect(body.currentState).not.toHaveProperty('refundedAmountMinor');
+        expect(body).not.toHaveProperty('amountMinor');
+        expect(body).not.toHaveProperty('paidAmountMinor');
+        expect(body).not.toHaveProperty('refundedAmountMinor');
+        expect(body).not.toHaveProperty('currentState');
         expect(body.history).toHaveLength(2);
         expect(body.history).toEqual(
           expect.arrayContaining([
@@ -570,11 +581,12 @@ describe('Event ingestion API (e2e)', () => {
 
     expect(order).toMatchObject({
       orderId,
-      currentState: null,
       history: [],
       rejectedEvents: [],
       auditLog: [],
     });
+    expect(order).not.toHaveProperty('currentState');
+    expect(order).not.toHaveProperty('status');
     expect(order.pendingJobs).toEqual([
       expect.objectContaining({
         eventId: 'evt-read-deferred-001',

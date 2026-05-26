@@ -91,7 +91,7 @@ describeDeployed('Deployed API hostile input scenarios (e2e)', () => {
         candidate.auditLog.length >= 7 && candidate.pendingJobs.length === 0,
     );
 
-    expect(order.currentState).toMatchObject({
+    expect(order).toMatchObject({
       status: 'PAID',
       amount: 100,
       currency: 'PLN',
@@ -124,11 +124,11 @@ describeDeployed('Deployed API hostile input scenarios (e2e)', () => {
       client,
       id,
       (candidate) =>
-        candidate.currentState?.status === 'CANCELLED' &&
+        candidate.status === 'CANCELLED' &&
         candidate.rejectedEvents.length === 2,
     );
 
-    expect(order.currentState).toMatchObject({
+    expect(order).toMatchObject({
       status: 'CANCELLED',
       paidAmount: 0,
       refundedAmount: 0,

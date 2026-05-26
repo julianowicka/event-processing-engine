@@ -90,16 +90,13 @@ information requested by the assignment:
 ```json
 {
   "orderId": "ord-501",
-  "currentState": {
-    "orderId": "ord-501",
-    "status": "CREATED",
-    "amount": 199.99,
-    "currency": "PLN",
-    "paidAmount": 0,
-    "refundedAmount": 0,
-    "createdAt": "2026-01-01T12:00:00.000Z",
-    "updatedAt": "2026-01-01T12:00:00.000Z"
-  },
+  "status": "CREATED",
+  "amount": 199.99,
+  "currency": "PLN",
+  "paidAmount": 0,
+  "refundedAmount": 0,
+  "createdAt": "2026-01-01T12:00:00.000Z",
+  "updatedAt": "2026-01-01T12:00:00.000Z",
   "history": [
     {
       "id": 1,
@@ -155,7 +152,34 @@ Rejected events include `REJECTED`, `DUPLICATE`, and `FAILED` decisions with
 their reason codes and messages. `pendingJobs` contains raw deliveries for the
 same `orderId` that are still `PENDING` or `RETRY`.
 
-If the order has no current state, no audit decisions, and no pending jobs, the
+When deliveries exist but no order has been materialized yet, the endpoint
+returns the available activity without root-level state fields:
+
+```json
+{
+  "orderId": "ord-501",
+  "history": [],
+  "rejectedEvents": [],
+  "pendingJobs": [
+    {
+      "id": 2,
+      "rawIncomingEventId": 2,
+      "status": "RETRY",
+      "availableAt": "2026-01-01T12:00:10.000Z",
+      "attempts": 1,
+      "lastErrorMessage": "Event requires an existing order",
+      "eventId": "evt-1002",
+      "orderId": "ord-501",
+      "type": "PAYMENT_CAPTURED",
+      "timestamp": 1710001000,
+      "receivedAt": "2026-01-01T12:00:00.000Z"
+    }
+  ],
+  "auditLog": []
+}
+```
+
+If the order has no state, no audit decisions, and no pending jobs, the
 endpoint returns `404`.
 
 ## `GET /api/events/:eventId`

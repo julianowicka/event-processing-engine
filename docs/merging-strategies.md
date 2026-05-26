@@ -40,7 +40,9 @@ Payment and refund events are facts, not simple overwrites.
 
 Refund events therefore use cumulative arithmetic instead of "latest timestamp
 wins". Deduplication by `eventId` prevents the same financial fact from being
-applied twice.
+applied twice. A distinct delayed refund remains applicable after a newer
+refund has already been processed, provided the cumulative total does not
+exceed captured payment.
 
 ## Status Changes
 
@@ -52,6 +54,10 @@ types:
 - cancellation moves `CREATED -> CANCELLED`,
 - refunds move `PAID -> PARTIALLY_REFUNDED | REFUNDED`,
 - refunds can continue from `PARTIALLY_REFUNDED`.
+
+Timestamp freshness controls set-like fields, payment, and cancellation
+ordering. It does not discard valid cumulative refund facts; an older accepted
+refund does not replace newer stored status-version metadata.
 
 `ORDER_UPDATED.payload.status` is not applied. This avoids a `PAID` order with
 no captured payment or a `REFUNDED` order with no refund amount. If the same

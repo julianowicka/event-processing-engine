@@ -7,7 +7,20 @@ async function bootstrap() {
   const corsOrigin = process.env.CORS_ORIGIN;
 
   app.enableShutdownHooks();
-  app.setGlobalPrefix('api');
+  app.setGlobalPrefix('api', {
+    exclude: [
+      'events',
+      'events/:eventId',
+      'api/events',
+      'api/events/:eventId',
+      'orders/:id',
+      'api/orders/:id',
+      'stats',
+      'api/stats',
+      'health',
+      'api/health',
+    ],
+  });
   app.enableCors({
     origin: corsOrigin
       ? corsOrigin.split(',').map((origin) => origin.trim())

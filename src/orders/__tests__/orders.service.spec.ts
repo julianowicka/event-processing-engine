@@ -31,24 +31,24 @@ describe('OrdersService', () => {
       find: jest.fn().mockResolvedValue([rawEvent]),
     });
     const service = new OrdersService(orders, decisions, rawEvents);
+    const details = await service.getOrderDetails('ord-retry-1');
 
-    await expect(service.getOrderDetails('ord-retry-1')).resolves.toMatchObject(
-      {
-        orderId: 'ord-retry-1',
-        currentState: null,
-        history: [],
-        rejectedEvents: [],
-        auditLog: [],
-        pendingJobs: [
-          {
-            rawIncomingEventId: 7,
-            status: ProcessingStatus.Retry,
-            attempts: 1,
-            availableAt: '2026-05-25T11:00:00.000Z',
-          },
-        ],
-      },
-    );
+    expect(details).toMatchObject({
+      orderId: 'ord-retry-1',
+      history: [],
+      rejectedEvents: [],
+      auditLog: [],
+      pendingJobs: [
+        {
+          rawIncomingEventId: 7,
+          status: ProcessingStatus.Retry,
+          attempts: 1,
+          availableAt: '2026-05-25T11:00:00.000Z',
+        },
+      ],
+    });
+    expect(details).not.toHaveProperty('currentState');
+    expect(details).not.toHaveProperty('status');
   });
 });
 
