@@ -534,12 +534,12 @@ describe('Event ingestion API (e2e)', () => {
             eventId,
             orderId,
             decision: EngineDecision.Accepted,
-            changedFields: expect.objectContaining({
-              amount: 80,
-              currency: 'PLN',
-            }),
           }),
         ]);
+        expect(body.history[0].changedFields).toMatchObject({
+          amount: 80,
+          currency: 'PLN',
+        });
         expect(body.history[0].changedFields).not.toHaveProperty('amountMinor');
       });
   });
