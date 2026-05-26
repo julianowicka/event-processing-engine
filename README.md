@@ -16,39 +16,44 @@
 
 </div>
 
-## System At A Glance
+## Processing Architecture
 
 ```mermaid
-flowchart LR
-  client["API clients"] -->|"batch order events"| api["NestJS API"]
-  api -->|"append raw delivery"| inbox[("raw_incoming_events<br/>durable inbox")]
-  api -->|"queued summary"| response["fast response"]
+flowchart TB
+  client["External integrations"] -->|"POST /api/events"| api["NestJS API"]
+  api -->|"durable append"| inbox[("raw_incoming_events<br/>immutable input + queue state")]
+  api -->|"queued result"| accepted["Async acceptance"]
 
-  scheduler["EventProcessingScheduler<br/>single worker"] -->|"available rows"| inbox
-  scheduler --> validation["event validation"]
-  validation --> dedupe[("processed_event_keys<br/>idempotency")]
-  dedupe --> rules["state machine<br/>merge strategy"]
+  inbox -->|"PENDING / RETRY"| scheduler["EventProcessingScheduler"]
 
-  rules --> orders[("orders<br/>current state")]
-  rules --> versions[("order_field_versions<br/>field timestamps")]
-  rules --> decisions[("event_decisions<br/>audit log")]
-  rules --> stats[("stats<br/>precomputed metrics")]
+  subgraph worker["Worker pipeline"]
+    direction LR
+    scheduler --> validate["Validate"]
+    validate --> dedupe["Deduplicate"]
+    dedupe --> transition["Apply state rules"]
+    transition --> finalize["Finalize decision"]
+  end
+
+  dedupe --> keys[("processed_event_keys<br/>idempotency")]
+  transition --> orders[("orders<br/>current read model")]
+  transition --> versions[("order_field_versions<br/>field freshness")]
+  finalize --> decisions[("event_decisions<br/>audit trail")]
+  finalize --> stats[("stats<br/>aggregate metrics")]
+  finalize --> inbox
 
   orders --> ordersApi["GET /api/orders/:id"]
-  inbox --> eventApi["GET /api/events/:eventId"]
   decisions --> ordersApi
-  decisions --> eventApi
   stats --> statsApi["GET /api/stats"]
 
-  classDef edge fill:#eef6ff,stroke:#2563eb,color:#0f172a;
-  classDef worker fill:#fff7ed,stroke:#ea580c,color:#0f172a;
-  classDef data fill:#f8fafc,stroke:#64748b,color:#0f172a;
-  classDef read fill:#ecfdf5,stroke:#059669,color:#0f172a;
+  classDef ingress fill:#eef6ff,stroke:#2563eb,color:#0f172a;
+  classDef workerNode fill:#fff7ed,stroke:#c2410c,color:#0f172a;
+  classDef store fill:#f8fafc,stroke:#64748b,color:#0f172a;
+  classDef read fill:#ecfdf5,stroke:#047857,color:#0f172a;
 
-  class client,api,response edge;
-  class scheduler,validation,rules worker;
-  class inbox,dedupe,orders,versions,decisions,stats data;
-  class ordersApi,eventApi,statsApi read;
+  class client,api,accepted ingress;
+  class scheduler,validate,dedupe,transition,finalize workerNode;
+  class inbox,keys,orders,versions,decisions,stats store;
+  class ordersApi,statsApi read;
 ```
 
 The HTTP request is intentionally small: it durably accepts input and returns
@@ -242,13 +247,12 @@ docker compose logs -f api
 
 ## API
 
-| Method | Path                   | Purpose                                                                    |
-| ------ | ---------------------- | -------------------------------------------------------------------------- |
-| `POST` | `/api/events`          | Store a batch of events for async processing.                              |
-| `GET`  | `/api/events/:eventId` | Inspect raw deliveries and final decisions for one external event id.      |
-| `GET`  | `/api/orders/:id`      | Read current state, history, rejected events, pending jobs, and audit log. |
-| `GET`  | `/api/stats`           | Read valid, rejected, duplicate, and average processing time metrics.      |
-| `GET`  | `/api/health`          | Check service status and configured database path.                         |
+| Method | Path              | Purpose                                                                    |
+| ------ | ----------------- | -------------------------------------------------------------------------- |
+| `POST` | `/api/events`     | Store a batch of events for async processing.                              |
+| `GET`  | `/api/orders/:id` | Read current state, history, rejected events, pending jobs, and audit log. |
+| `GET`  | `/api/stats`      | Read valid, rejected, duplicate, and average processing time metrics.      |
+| `GET`  | `/api/health`     | Check service status and configured database path.                         |
 
 Example batch:
 
