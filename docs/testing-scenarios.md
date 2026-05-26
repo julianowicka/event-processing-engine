@@ -35,6 +35,7 @@ Before submitting:
 
 - Build passes.
 - Jest tests pass.
+- Recruitment acceptance e2e: `yarn test:e2e --runTestsByPath ./test/__tests__/recruitment-requirements.e2e-spec.ts`.
 - README explains assumptions and how to run the app.
 - Manual smoke test covers `POST /api/events`, worker processing,
   `GET /api/orders/:id`, and `GET /api/stats`.

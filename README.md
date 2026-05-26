@@ -328,8 +328,30 @@ yarn migration:revert
 ```bash
 yarn test
 yarn test:e2e
+yarn test:e2e --runTestsByPath ./test/__tests__/recruitment-requirements.e2e-spec.ts
 yarn build
 ```
+
+The recruitment acceptance e2e test above runs locally against an isolated
+temporary SQLite database and checks the task requirements end to end:
+deduplication, out-of-order events, partial updates, invalid events, state
+transitions, audit log, order history, and stats.
+
+Deployed smoke/load tests are opt-in because they write synthetic `smoke-*`,
+`hostile-*`, `dupe-*`, and `load-*` events to the target database:
+
+```bash
+E2E_BASE_URL=https://event-processing-engine.julianowicka.dev yarn test:e2e:deployed
+
+E2E_BASE_URL=https://event-processing-engine.julianowicka.dev \
+E2E_RUN_LOAD=true \
+E2E_LOAD_REQUESTS=1000 \
+E2E_LOAD_CONCURRENCY=25 \
+yarn test:e2e:deployed
+```
+
+`E2E_BASE_URL` selects the deployed API origin, `E2E_RUN_LOAD=true` enables the
+load probe, and `E2E_LOAD_REQUESTS` / `E2E_LOAD_CONCURRENCY` control its volume.
 
 ## Project Map
 
